@@ -17,6 +17,7 @@ Usage:
       --args.vla-interval 10
 """
 
+import csv
 import dataclasses
 import json
 import logging
@@ -38,7 +39,69 @@ import imageio
 import numpy as np
 import tqdm
 import tyro
-import torch
+from PIL import Image, ImageDraw, ImageFont
+
+# fps for video output
+VIDEO_FPS = 30
+AGENT_PAUSE_SEC = 0.5  # pause on agent frames
+
+
+def _get_font(size: int = 14) -> ImageFont.FreeTypeFont:
+    """Get a monospace font, falling back to default."""
+    for path in ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+                 "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+                 "C:\\Windows\\Fonts\\consola.ttf"):
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
+
+
+def draw_overlay(img: np.ndarray, lines: List[str], color: str = "white") -> np.ndarray:
+    """
+    Draw a semi-transparent text bar at the bottom of an image.
+
+    Args:
+        img: numpy RGB image (H, W, 3) uint8
+        lines: list of text lines to draw
+        color: "white" for normal, "yellow" for agent, "green" for success
+    """
+    pil = Image.fromarray(img).convert("RGBA")
+    draw = ImageDraw.Draw(pil)
+    font = _get_font(13)
+
+    colors = {"white": (255, 255, 255), "yellow": (255, 255, 100),
+              "green": (100, 255, 100), "red": (255, 100, 100)}
+
+    # Bar dimensions
+    line_h = 16
+    pad = 6
+    bar_h = len(lines) * line_h + pad * 2
+    bar_w = pil.width
+
+    # Semi-transparent black bar
+    overlay = Image.new("RGBA", (bar_w, bar_h), (0, 0, 0, 180))
+    pil.paste(overlay, (0, pil.height - bar_h), overlay)
+
+    # Draw text
+    rgb = colors.get(color, colors["white"])
+    for i, line in enumerate(lines):
+        y = pil.height - bar_h + pad + i * line_h
+        draw.text((pad, y), line, fill=rgb, font=font)
+
+    return np.array(pil.convert("RGB"))
+
+
+def init_csv(csv_path: str):
+    """Create CSV file with headers."""
+    os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+    f = open(csv_path, "w", newline="")
+    w = csv.writer(f)
+    w.writerow(["episode", "task", "step", "agent_round", "mode",
+                 "agent_output", "tool_call_name", "tool_call_args", "decision"])
+    return f, w
 
 from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
@@ -87,7 +150,7 @@ class Args:
     window_size: int = 2
 
     # Agent
-    vla_interval: int = 10  # VLA steps between agent checks
+    vla_interval: int = 20  # VLA steps between agent checks
     max_agent_rounds: int = 30
 
     # Paths
@@ -228,6 +291,61 @@ def _get_libero_env(task, resolution, seed):
 # ---------------------------------------------------------------------------
 # Agent check function
 # ---------------------------------------------------------------------------
+def agent_plan(
+    model: Unifolm_VLA_Inference,
+    obs_queue: deque,
+    task_description: str,
+    log_file=None,
+) -> AgentDecision:
+    """
+    Initial agent planning: look at the scene and decide the first VLA instruction.
+    """
+    raw_images = []
+    for obs in obs_queue:
+        raw_images.append(obs["full_image"])
+    for obs in obs_queue:
+        raw_images.extend([obs[k] for k in obs.keys() if "wrist" in k])
+
+    plan_prompt = (
+        f"You are a robot task planner. Look at the scene and break down this task "
+        f"into a concrete first step for a VLA model to execute.\n\n"
+        f'Overall task: "{task_description}"\n\n'
+        f"Output a <tool_call> with the first sub-task instruction:\n"
+        f"<tool_call>\n"
+        f'{{"name":"call_vla","arguments":{{"instruction":"<first step in English>","reason":"<why>","max_vla_steps":50}}}}\n'
+        f"</tool_call>"
+    )
+
+    try:
+        text = model.vla.predict_text(
+            images=raw_images,
+            prompt_text=plan_prompt,
+            max_new_tokens=512,
+            temperature=0.1,
+        )
+    except Exception as e:
+        logger.warning(f"Agent plan failed: {e}. Using original task.")
+        return AgentDecision(action="new_instruction", instruction=task_description)
+
+    log_message(f"[Agent Plan] {text}", log_file)
+
+    if not ToolCallParser.has_tool_call(text):
+        return AgentDecision(action="new_instruction", instruction=task_description)
+
+    tool_calls = ToolCallParser.parse(text)
+    if not tool_calls:
+        return AgentDecision(action="new_instruction", instruction=task_description)
+
+    tc = tool_calls[0]
+    args = tc.get("arguments", {})
+    return AgentDecision(
+        action="new_instruction",
+        instruction=args.get("instruction", task_description),
+        reason=args.get("reason", ""),
+        max_vla_steps=args.get("max_vla_steps", 50),
+    )
+
+
 def agent_check(
     model: Unifolm_VLA_Inference,
     agent: ToolCallAgent,
@@ -235,18 +353,24 @@ def agent_check(
     task_description: str,
     step_counter: int,
     max_steps: int,
+    env_done: bool = False,
     log_file=None,
 ) -> AgentDecision:
     """
     Run the LLM Head to check task progress.
 
-    Returns an AgentDecision: continue / new_instruction / terminate.
+    Returns (AgentDecision, raw_text) tuple.
     """
     # Build agent prompt with few-shot examples
+    env_hint = ""
+    if env_done:
+        env_hint = "The environment signals the task may be done. Verify visually: is the goal state actually achieved?\n\n"
+
     agent_prompt = (
         f"You monitor a robot VLA model. Look at the image and decide.\n\n"
         f'Task: "{task_description}"\n'
-        f"Steps done: {step_counter} / {max_steps}.\n\n"
+        f"Steps done: {step_counter} / {max_steps}.\n"
+        f"{env_hint}\n"
         f"If task is in progress, just describe what you see briefly.\n"
         f"If the robot needs a new instruction, output a tool call.\n"
         f"If the task is done, output terminate.\n\n"
@@ -277,27 +401,27 @@ def agent_check(
         text = model.vla.predict_text(
             images=raw_images,
             prompt_text=agent_prompt,
-            max_new_tokens=512,
+            max_new_tokens=2048,
             temperature=0.1,
         )
     except Exception as e:
         logger.warning(f"Agent API failed: {e}. Defaulting to continue.")
         log_message(f"[Agent] API error: {e}. Continue.", log_file)
-        return AgentDecision(action="continue", reason=f"api error: {e}")
+        return AgentDecision(action="continue", reason=f"api error: {e}"), ""
 
-    log_message(f"[Agent] Raw output: {text[:300]}", log_file)
+    log_message(f"[Agent] Raw output: {text}", log_file)
 
     # Parse
     from unifolm_vla.agent.tool_call_parser import ToolCallParser
 
     if not ToolCallParser.has_tool_call(text):
         reasoning = ToolCallParser.extract_reasoning(text)
-        log_message(f"[Agent] Decision: continue — {reasoning[:200]}", log_file)
-        return AgentDecision(action="continue", reason=reasoning or "normal progress")
+        log_message(f"[Agent] Decision: continue — {reasoning}", log_file)
+        return AgentDecision(action="continue", reason=reasoning or "normal progress"), text
 
     tool_calls = ToolCallParser.parse(text)
     if not tool_calls:
-        return AgentDecision(action="continue", reason="parse failed")
+        return AgentDecision(action="continue", reason="parse failed"), text
 
     tc = tool_calls[0]
     name = tc.get("name", "")
@@ -310,7 +434,7 @@ def agent_check(
             success=args.get("success", False),
         )
         log_message(f"[Agent] Decision: terminate — {decision.reason}", log_file)
-        return decision
+        return decision, text
     elif name == "call_vla":
         decision = AgentDecision(
             action="new_instruction",
@@ -323,10 +447,10 @@ def agent_check(
             f"(reason: {decision.reason})",
             log_file,
         )
-        return decision
+        return decision, text
     else:
         log_message(f"[Agent] Decision: continue — unknown tool '{name}'", log_file)
-        return AgentDecision(action="continue", reason=f"unknown tool: {name}")
+        return AgentDecision(action="continue", reason=f"unknown tool: {name}"), text
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +498,10 @@ def eval_libero_agent(args: Args) -> None:
     log_message(f"Agent config: vla_interval={args.vla_interval}, "
                 f"max_rounds={args.max_agent_rounds}", log_file)
 
+    # CSV for tool call records
+    csv_path = pathlib.Path(args.video_out_path) / "tool_calls.csv"
+    csv_f, csv_w = init_csv(str(csv_path))
+
     # Evaluation
     total_episodes, total_successes = 0, 0
     agent_interventions = 0  # Count how many times agent changed instruction
@@ -397,15 +525,38 @@ def eval_libero_agent(args: Args) -> None:
             t = 0
             step = 0
             replay_images = []
-            current_instruction = task_description
-            agent_step_counter = 0  # Steps since last agent check
-
             action_queue = deque(maxlen=NUM_ACTIONS_CHUNK)
             obs_queue = deque(maxlen=args.window_size)
             success = False
             done = False
 
+            # ── Initial Agent Planning ────────────────────────────────
+            # Build observation from first frame
+            while len(obs_queue) < args.window_size:
+                observation, img = prepare_observation(obs, resize_size=224)
+                obs_queue.append(observation)
+
+            plan_decision = agent_plan(
+                model=model,
+                obs_queue=obs_queue,
+                task_description=task_description,
+                log_file=log_file,
+            )
+            current_instruction = plan_decision.instruction or task_description
+            agent_step_counter = 0
+            obs_queue.clear()
+
+            # Annotate initial planning frame
+            plan_lines = [
+                f"AGENT PLAN | Task: {task_description[:70]}",
+                f"  → {current_instruction[:100]}"
+            ]
+            plan_frame = draw_overlay(img, plan_lines, "yellow")
+            for _ in range(int(AGENT_PAUSE_SEC * VIDEO_FPS)):
+                replay_images.append(plan_frame)
+
             log_message(f"Starting episode {task_episodes + 1}...", log_file)
+            log_message(f"[Agent] Initial instruction: {current_instruction}", log_file)
 
             while t < max_steps + args.num_steps_wait and not done:
                 # Wait phase
@@ -418,7 +569,11 @@ def eval_libero_agent(args: Args) -> None:
                 while len(obs_queue) < args.window_size:
                     observation, img = prepare_observation(obs, resize_size=224)
                     obs_queue.append(observation)
-                replay_images.append(img)
+
+                # ── Annotate VLA frame ────────────────────────────────
+                vla_info = f"VLA | Step {step+1} | {current_instruction[:80]}"
+                img_annotated = draw_overlay(img, [vla_info], "white")
+                replay_images.append(img_annotated)
 
                 # VLA action inference
                 if len(action_queue) == 0:
@@ -435,26 +590,62 @@ def eval_libero_agent(args: Args) -> None:
                 agent.record_obs(observation)
                 agent.record_action(action)
 
-                if done_flag:
-                    success = True
-                    done = True
-                    break
-
                 t += 1
                 step += 1
                 agent_step_counter += 1
 
-                # ── Agent check ───────────────────────────────────────
-                if agent_step_counter >= args.vla_interval and not done:
-                    decision = agent_check(
+                # ── Agent check: every N steps OR when env signals done ───
+                trigger_check = (
+                    agent_step_counter >= args.vla_interval
+                    or done_flag
+                    or t >= max_steps + args.num_steps_wait - 1
+                )
+
+                if trigger_check and not done:
+                    decision, agent_text = agent_check(
                         model=model,
                         agent=agent,
                         obs_queue=obs_queue,
                         task_description=task_description,
                         step_counter=step,
                         max_steps=max_steps,
+                        env_done=done_flag,
                         log_file=log_file,
                     )
+
+                    # ── Annotate agent pause frames ───────────────────
+                    agent_lines = [f"AGENT | Round {agent.agent_round} | {current_instruction[:70]}"]
+                    agent_text_short = agent_text[:120].replace('\n', ' ')
+                    agent_lines.append(f"  {agent_text_short}")
+                    if decision.action == "new_instruction":
+                        agent_lines.append(f"  TOOL: call_vla → {decision.instruction[:80]}")
+                    elif decision.action == "terminate":
+                        status = "SUCCESS" if decision.success else "FAIL"
+                        agent_lines.append(f"  TOOL: terminate ({status}): {decision.reason[:80]}")
+
+                    agent_color = "green" if decision.action == "terminate" and decision.success else \
+                                  "red" if decision.action == "terminate" else "yellow"
+                    agent_frame = draw_overlay(img_annotated, agent_lines, agent_color)
+
+                    # Pause: insert 0.5s of duplicate agent frames
+                    pause_frames = int(AGENT_PAUSE_SEC * VIDEO_FPS)
+                    for _ in range(pause_frames):
+                        replay_images.append(agent_frame)
+
+                    # ── CSV record ────────────────────────────────────
+                    tool_name = ""
+                    tool_args = ""
+                    if decision.action == "new_instruction":
+                        tool_name = "call_vla"
+                        tool_args = decision.instruction or ""
+                    elif decision.action == "terminate":
+                        tool_name = "terminate"
+                        tool_args = f"success={decision.success}, {decision.reason}"
+                    csv_w.writerow([
+                        total_episodes + 1, task_description, step, agent.agent_round,
+                        "agent", agent_text_short, tool_name, tool_args, decision.action
+                    ])
+                    csv_f.flush()
 
                     if decision.action == "terminate":
                         done = True
@@ -474,7 +665,10 @@ def eval_libero_agent(args: Args) -> None:
                             log_file,
                         )
 
-                    agent_step_counter = 0  # Reset counter after check
+                    agent_step_counter = 0
+
+                if done:
+                    break
 
             # Episode summary
             task_episodes += 1
@@ -519,6 +713,9 @@ def eval_libero_agent(args: Args) -> None:
 
     if log_file:
         log_file.close()
+    csv_f.close()
+    log_message(f"Tool call records saved to: {csv_path}", log_file=None)
+    logger.info(f"Tool call records saved to: {csv_path}")
 
 
 if __name__ == "__main__":

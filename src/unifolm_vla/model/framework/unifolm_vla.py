@@ -56,13 +56,13 @@ class Unifolm_VLA(baseframework):
         self.action_model: FlowmatchingActionHead = get_action_model(config=self.config)
 
         # ── Agent: Bailian Qwen-VL API ─────────────────────────────
-        # Model: qwen3-vl-plus / qwen-vl-plus / qwen2.5-vl-72b-instruct
+        # Model: qwen3-vl-flash / qwen-vl-plus / qwen2.5-vl-72b-instruct
         # Secrets: DASHSCOPE_API_KEY
         if agent_model_id is None and config is not None:
             agent_cfg = config.framework.get("agent_vlm", {})
-            agent_model_id = agent_cfg.get("base_vlm", "qwen3-vl-plus")
+            agent_model_id = agent_cfg.get("base_vlm", "qwen3-vl-flash")
         elif agent_model_id is None:
-            agent_model_id = os.environ.get("AGENT_VLM_MODEL", "qwen3-vl-plus")
+            agent_model_id = os.environ.get("AGENT_VLM_MODEL", "qwen3-vl-flash")
 
         self.agent_model_id = agent_model_id
         self._agent_client = None  # lazy init
