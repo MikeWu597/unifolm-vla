@@ -1,23 +1,26 @@
 #!/bin/bash
 # ============================================================================
 # UnifoLM-VLA-ToolCall Agentic LIBERO Evaluation
-# ============================================================================
+#
 # Dual-head architecture:
 #   VLA Head (FlowmatchingActionHead) → actions every step
 #   LLM Head (lm_head) → agent reasoning every N steps
+#
+# Run from anywhere — auto-detects repo root.
 # ============================================================================
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE="${WORKSPACE:-$(dirname "$(dirname "$SCRIPT_DIR")")}"
+# cd to repo root (2 levels up from scripts/eval_scripts/)
+cd "$(dirname "$0")/../.."
+REPO_ROOT="$(pwd)"
 
 # ── Paths ────────────────────────────────────────────────────────────
-LIBERO_HOME="${LIBERO_HOME:-${WORKSPACE}/LIBERO}"
+LIBERO_HOME="${LIBERO_HOME:-${REPO_ROOT}/LIBERO}"
 export LIBERO_HOME
 export LIBERO_CONFIG_PATH="${LIBERO_HOME}/libero"
 
-VLM_PRETRAINED_PATH="${VLM_PRETRAINED_PATH:-${WORKSPACE}/models/UnifoLM-VLM-Base}"
-VLA_CHECKPOINT="${VLA_CHECKPOINT:-${WORKSPACE}/models/UnifoLM-VLA-LIBERO/checkpoints/pytorch_model.pt}"
+VLM_PRETRAINED_PATH="${VLM_PRETRAINED_PATH:-${REPO_ROOT}/models/UnifoLM-VLM-Base}"
+VLA_CHECKPOINT="${VLA_CHECKPOINT:-${REPO_ROOT}/models/UnifoLM-VLA-LIBERO/checkpoints/pytorch_model.pt}"
 
 # ── Evaluation Config ─────────────────────────────────────────────────
 TASK_SUITE="${TASK_SUITE:-libero_spatial}"
@@ -26,8 +29,7 @@ NUM_TRIALS="${NUM_TRIALS:-5}"
 WINDOW_SIZE="${WINDOW_SIZE:-2}"
 DEVICE="${DEVICE:-0}"
 
-# Agent-specific
-VLA_INTERVAL="${VLA_INTERVAL:-10}"    # VLA steps between agent checks
+VLA_INTERVAL="${VLA_INTERVAL:-10}"
 MAX_AGENT_ROUNDS="${MAX_AGENT_ROUNDS:-30}"
 
 VIDEO_OUT_DIR="results/agent_${TASK_SUITE}/$(date +%Y%m%d_%H%M%S)"
@@ -36,44 +38,40 @@ VIDEO_OUT_DIR="results/agent_${TASK_SUITE}/$(date +%Y%m%d_%H%M%S)"
 echo "============================================"
 echo "UnifoLM-VLA-ToolCall Agentic Evaluation"
 echo "============================================"
-echo "Workspace:          ${WORKSPACE}"
+echo "Repo Root:          ${REPO_ROOT}"
+echo "LIBERO_HOME:        ${LIBERO_HOME}"
 echo "VLA Checkpoint:     ${VLA_CHECKPOINT}"
 echo "VLM Base:           ${VLM_PRETRAINED_PATH}"
 echo "Task Suite:         ${TASK_SUITE}"
 echo "Num Trials/Task:    ${NUM_TRIALS}"
 echo "VLA Interval:       ${VLA_INTERVAL}"
 echo "Max Agent Rounds:   ${MAX_AGENT_ROUNDS}"
-echo "Output Dir:         ${VIDEO_OUT_DIR}"
 echo "============================================"
 
-if [ ! -f "${VLA_CHECKPOINT}" ]; then
-    echo "ERROR: Checkpoint not found: ${VLA_CHECKPOINT}"
-    exit 1
-fi
-if [ ! -d "${VLM_PRETRAINED_PATH}" ]; then
-    echo "ERROR: VLM base not found: ${VLM_PRETRAINED_PATH}"
-    exit 1
-fi
-if [ ! -d "${LIBERO_HOME}" ]; then
-    echo "ERROR: LIBERO not found: ${LIBERO_HOME}"
-    exit 1
-fi
+[ ! -f "${VLA_CHECKPOINT}" ] && echo "ERROR: Checkpoint not found: ${VLA_CHECKPOINT}" && exit 1
+[ ! -d "${VLM_PRETRAINED_PATH}" ] && echo "ERROR: VLM base not found: ${VLM_PRETRAINED_PATH}" && exit 1
+[ ! -d "${LIBERO_HOME}" ] && echo "ERROR: LIBERO not found: ${LIBERO_HOME}" && exit 1
 
 # ── Environment ────────────────────────────────────────────────────────
-export PYTHONPATH="${LIBERO_HOME}:${WORKSPACE}:${PYTHONPATH}"
+export PYTHONPATH="${LIBERO_HOME}:${REPO_ROOT}:${PYTHONPATH}"
 export TORCH_FORCE_WEIGHTS_ONLY_LOAD=0
 
-if command -v conda &> /dev/null; then
-    source "$(conda info --base)/etc/profile.d/conda.sh" 2>/dev/null || true
-    conda activate unifolm-vla 2>/dev/null || true
-fi
+# Headless rendering for LIBERO (cloud GPU compatibility)
+export MUJOCO_GL="${MUJOCO_GL:-osmesa}"
+
+# Guard: TensorFlow 2.15 crashes with numpy>=2
+python -c "import numpy; exit(0 if numpy.__version__ < '2' else 1)" 2>/dev/null || {
+    echo "WARNING: numpy>=2 detected, TensorFlow will crash. Run: pip install 'numpy<2' --force-reinstall"
+}
+
+conda activate unifolm-vla 2>/dev/null || true
 
 # ── Run ────────────────────────────────────────────────────────────────
 echo ""
 echo "Starting agentic evaluation..."
 echo ""
 
-CUDA_VISIBLE_DEVICES=${DEVICE} python "${WORKSPACE}/experiments/LIBERO/eval_libero_agent.py" \
+CUDA_VISIBLE_DEVICES=${DEVICE} python experiments/LIBERO/eval_libero_agent.py \
     --args.pretrained-path "${VLA_CHECKPOINT}" \
     --args.vlm-pretrained-path "${VLM_PRETRAINED_PATH}" \
     --args.task-suite-name "${TASK_SUITE}" \
@@ -85,7 +83,4 @@ CUDA_VISIBLE_DEVICES=${DEVICE} python "${WORKSPACE}/experiments/LIBERO/eval_libe
     --args.max-agent-rounds "${MAX_AGENT_ROUNDS}"
 
 echo ""
-echo "============================================"
-echo "Agentic evaluation complete!"
-echo "Results saved to: ${VIDEO_OUT_DIR}"
-echo "============================================"
+echo "Done: ${VIDEO_OUT_DIR}"
