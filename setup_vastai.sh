@@ -20,7 +20,7 @@ echo "============================================"
 # -------------------------------------------------------------------
 # 1. Check CUDA
 # -------------------------------------------------------------------
-echo "[1/7] Checking CUDA..."
+echo "[1/6] Checking CUDA..."
 nvidia-smi | head -5
 if command -v nvcc &> /dev/null; then
     nvcc --version | grep "release"
@@ -31,7 +31,7 @@ fi
 # -------------------------------------------------------------------
 # 2. Create conda env
 # -------------------------------------------------------------------
-echo "[2/7] Creating conda environment..."
+echo "[2/6] Creating conda environment..."
 if command -v conda &> /dev/null; then
     conda create -n unifolm-vla python==3.10.18 -y
     source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -43,7 +43,7 @@ fi
 # -------------------------------------------------------------------
 # 3. Core dependencies (exact versions that work together)
 # -------------------------------------------------------------------
-echo "[3/7] Installing core dependencies..."
+echo "[3/6] Installing core dependencies..."
 pip install --upgrade pip
 
 # Auto-detect CUDA version: 5090/Blackwell needs torch>=2.7 with cu128+
@@ -71,27 +71,19 @@ pip install pydantic==2.10.6 pillow numpy==1.26.4 tyro==0.9.35
 pip install scipy matplotlib huggingface_hub
 
 # Inference server (optional)
-pip install fastapi uvicorn json_numpy
+pip install fastapi uvicorn json_numpy openai
 
 # -------------------------------------------------------------------
-# 4. flash-attn (try pre-built first, source compile as fallback)
+# 4. Register package (inference-only, skip training deps)
 # -------------------------------------------------------------------
-echo "[4/7] Installing flash-attn..."
-pip install flash-attn 2>/dev/null || {
-    echo "Pre-built flash-attn failed, compiling from source..."
-    pip install flash-attn --no-build-isolation --no-cache-dir
-}
-
-# -------------------------------------------------------------------
-# 5. Register package (inference-only, skip training deps)
-# -------------------------------------------------------------------
-echo "[5/7] Registering unifolm_vla package..."
+echo "[4/6] Registering unifolm_vla package..."
+# flash-attn NOT needed — QWen2_5.py auto-falls-back to sdpa (PyTorch built-in)
 pip install -e . --no-deps
 
 # -------------------------------------------------------------------
 # 6. LIBERO + headless rendering
 # -------------------------------------------------------------------
-echo "[6/7] Installing LIBERO + dependencies..."
+echo "[5/6] Installing LIBERO + dependencies..."
 
 # Headless rendering: required for cloud GPU without display
 apt-get update -qq && apt-get install -y -qq libosmesa6-dev 2>/dev/null || true
@@ -114,7 +106,7 @@ pip install bddl easydict cloudpickle gym mujoco
 # -------------------------------------------------------------------
 # 7. Post-install guards
 # -------------------------------------------------------------------
-echo "[7/7] Finalizing..."
+echo "[6/6] Finalizing..."
 
 # numpy<2 is MANDATORY — TF 2.15 and robosuite both need it
 pip install "numpy<2" --force-reinstall 2>/dev/null || true

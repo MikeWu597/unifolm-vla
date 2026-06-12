@@ -24,11 +24,11 @@ import math
 import os
 import pathlib
 
-# torch 2.6+: LIBERO uses torch.load with old numpy pickles → need safe_globals
+# torch 2.6+: LIBERO uses torch.load with old numpy pickles.
+# monkey-patch torch.load so 'weights_only=False' is the default again.
 import torch
-import numpy as np
-torch.serialization.add_safe_globals([np.core.multiarray._reconstruct])
-torch.serialization.add_safe_globals([np._core.multiarray._reconstruct])
+_orig_load = torch.load
+torch.load = lambda *a, **kw: _orig_load(*a, **{'weights_only': False, **kw})
 from pathlib import Path
 import time
 from collections import deque
@@ -185,47 +185,6 @@ def get_action_state(
     return actions
 
 
-def get_agent_qwen_inputs(
-    observations: deque,
-    task_description: str,
-    model: Unifolm_VLA_Inference,
-    agent_prompt: str,
-):
-    """Build qwen_inputs for the LLM Head using the VANILLA agent processor."""
-    all_images = []
-    for obs in observations:
-        all_images.append(obs["full_image"])
-    for obs in observations:
-        all_images.extend([obs[k] for k in obs.keys() if "wrist" in k])
-
-    all_images = prepare_images_for_vla(all_images)
-
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                *[{"type": "image", "image": img} for img in all_images],
-                {"type": "text", "text": agent_prompt},
-            ],
-        },
-    ]
-
-    # Use agent_processor (vanilla Qwen2.5-VL) — NOT the fine-tuned VLA processor
-    agent_proc = model.vla.agent_processor
-    text_processed = agent_proc.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-    image_inputs, video_inputs = process_vision_info(messages)
-    qwen_inputs = agent_proc(
-        text=text_processed,
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
-    )
-    return qwen_inputs
-
-
 def normalize_gripper_action(action: np.ndarray, binarize: bool = True) -> np.ndarray:
     normalized_action = action.copy()
     orig_low, orig_high = 0.0, 1.0
@@ -283,45 +242,48 @@ def agent_check(
 
     Returns an AgentDecision: continue / new_instruction / terminate.
     """
-    # Build agent-specific prompt
+    # Build agent prompt with few-shot examples
     agent_prompt = (
-        f"You are a robot task supervisor monitoring a VLA model.\n\n"
-        f'Current task: "{task_description}"\n'
-        f"Progress: {step_counter} / {max_steps} steps executed.\n\n"
-        f"Your role:\n"
-        f"1. Assess whether the VLA is making progress.\n"
-        f"2. If progress is normal, output your observation. Do NOT call any tool.\n"
-        f"3. If the task is stuck or failing, call call_vla with a corrected instruction.\n"
-        f"4. If the task appears completed, call terminate with success=true.\n"
-        f"5. If the task has irrecoverably failed, call terminate with success=false.\n\n"
-        f"Available tools:\n"
-        f"- call_vla: Give the VLA a new sub-task instruction. "
-        f'Parameters: {{"instruction": "new task", "reason": "why", "max_vla_steps": 50}}\n'
-        f"- terminate: End the episode. "
-        f'Parameters: {{"success": true/false, "reason": "why"}}\n\n'
-        f"To call a tool, output:\n"
+        f"You monitor a robot VLA model. Look at the image and decide.\n\n"
+        f'Task: "{task_description}"\n'
+        f"Steps done: {step_counter} / {max_steps}.\n\n"
+        f"If task is in progress, just describe what you see briefly.\n"
+        f"If the robot needs a new instruction, output a tool call.\n"
+        f"If the task is done, output terminate.\n\n"
+        f"--- Examples ---\n\n"
+        f"Example 1 — task looks complete:\n"
         f"<tool_call>\n"
-        f'{{"name": "<tool_name>", "arguments": {{...}}}}\n'
+        f'{{"name":"terminate","arguments":{{"success":true,"reason":"bowl is on the plate"}}}}\n'
         f"</tool_call>\n\n"
-        f"Analyze the current observation and decide."
+        f"Example 2 — robot is stuck, need new instruction:\n"
+        f"<tool_call>\n"
+        f'{{"name":"call_vla","arguments":{{"instruction":"move the black bowl left by 3cm and place it on the plate","reason":"bowl missed the plate","max_vla_steps":30}}}}\n'
+        f"</tool_call>\n\n"
+        f"Example 3 — normal progress, no tool needed:\n"
+        f"The robot is reaching toward the bowl. Continuing.\n\n"
+        f"--- End Examples ---\n\n"
+        f"Now analyze the current observation:"
     )
 
-    # Build qwen inputs for the LLM Head
-    qwen_inputs = get_agent_qwen_inputs(obs_queue, task_description, model, agent_prompt)
+    # Collect raw images for the API call
+    raw_images = []
+    for obs in obs_queue:
+        raw_images.append(obs["full_image"])
+    for obs in obs_queue:
+        raw_images.extend([obs[k] for k in obs.keys() if "wrist" in k])
 
-    # Move to GPU
-    device = model.vla.qwen_vl_interface.model.device
-    for k, v in list(qwen_inputs.items()):
-        if isinstance(v, torch.Tensor):
-            qwen_inputs[k] = v.to(device)
-
-    # Run LLM Head
+    # Call agent API (Bailian Qwen-VL)
     try:
-        text = model.vla.predict_text(qwen_inputs, max_new_tokens=256)
+        text = model.vla.predict_text(
+            images=raw_images,
+            prompt_text=agent_prompt,
+            max_new_tokens=512,
+            temperature=0.1,
+        )
     except Exception as e:
-        logger.warning(f"LLM Head failed: {e}. Defaulting to continue.")
-        log_message(f"[Agent] LLM error: {e}. Continue.", log_file)
-        return AgentDecision(action="continue", reason=f"llm error: {e}")
+        logger.warning(f"Agent API failed: {e}. Defaulting to continue.")
+        log_message(f"[Agent] API error: {e}. Continue.", log_file)
+        return AgentDecision(action="continue", reason=f"api error: {e}")
 
     log_message(f"[Agent] Raw output: {text[:300]}", log_file)
 

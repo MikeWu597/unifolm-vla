@@ -42,7 +42,7 @@ MAX_AGENT_ROUNDS="${MAX_AGENT_ROUNDS:-30}"
 
 # Agent VLM: vanilla Qwen2.5-VL for text generation
 # Auto-downloads from HF if not cached. Set to local path or 3B variant to save VRAM.
-export AGENT_VLM_PATH="${AGENT_VLM_PATH:-Qwen/Qwen2.5-VL-3B-Instruct}"
+export AGENT_VLM_PATH="${AGENT_VLM_PATH:-qwen3-vl-plus}"
 
 VIDEO_OUT_DIR="results/agent_${TASK_SUITE}/$(date +%Y%m%d_%H%M%S)"
 
@@ -56,7 +56,7 @@ echo "VLA Checkpoint:     ${VLA_CHECKPOINT}"
 echo "VLM Base:           ${VLM_PRETRAINED_PATH}"
 echo "Task Suite:         ${TASK_SUITE}"
 echo "Num Trials/Task:    ${NUM_TRIALS}"
-echo "Agent VLM:          ${AGENT_VLM_PATH}"
+echo "Agent API Model:    ${AGENT_VLM_PATH}"
 echo "VLA Interval:       ${VLA_INTERVAL}"
 echo "Max Agent Rounds:   ${MAX_AGENT_ROUNDS}"
 echo "============================================"
