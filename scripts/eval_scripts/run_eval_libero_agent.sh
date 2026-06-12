@@ -14,6 +14,14 @@ set -e
 cd "$(dirname "$0")/../.."
 REPO_ROOT="$(pwd)"
 
+# ── Auto-fix broken flash-attn ────────────────────────────────────────
+# flash_attn .so is often pre-installed but incompatible with torch.
+# Uninstall it so QWen2_5.py falls back to sdpa (built-in, always works).
+python -c "import flash_attn" 2>/dev/null && {
+    echo "Removing pre-installed flash-attn (replaced by sdpa)..."
+    pip uninstall flash-attn -y 2>/dev/null || true
+} || true
+
 # ── Paths ────────────────────────────────────────────────────────────
 LIBERO_HOME="${LIBERO_HOME:-${REPO_ROOT}/LIBERO}"
 export LIBERO_HOME

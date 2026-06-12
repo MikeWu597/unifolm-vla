@@ -78,22 +78,20 @@ class baseframework(nn.Module):
         FrameworkModel = build_framework(cfg=model_config)
         FrameworkModel.norm_stats = norm_stats
         model_state_dict = torch.load(pretrained_checkpoint, map_location="cpu")
-        model_keys = set(FrameworkModel.state_dict().keys())
-        checkpoint_keys = set(model_state_dict.keys())
-        try:
-            FrameworkModel.load_state_dict(model_state_dict, strict=True)
-        except RuntimeError as e:
-            common_keys = model_keys.intersection(checkpoint_keys)
-            missing_keys = model_keys - common_keys
-            unexpected_keys = checkpoint_keys - common_keys
-            if missing_keys:
-                logger.warning(f"Missing keys in state_dict: {missing_keys}")
-            if unexpected_keys:
-                logger.warning(f"Unexpected keys in state_dict: {unexpected_keys}")
 
-            raise e
+        # Load with strict=False: agent_model.* keys are loaded separately
+        # from a vanilla Qwen2.5-VL checkpoint and are NOT in the VLA .pt file.
+        missing_keys, unexpected_keys = FrameworkModel.load_state_dict(
+            model_state_dict, strict=False
+        )
 
-        FrameworkModel = FrameworkModel
+        # Only warn about missing keys that are NOT agent_model (loaded separately)
+        non_agent_missing = [k for k in missing_keys if not k.startswith("agent_model.")]
+        if non_agent_missing:
+            logger.warning(f"Missing keys in state_dict (non-agent): {non_agent_missing}")
+        if unexpected_keys:
+            logger.warning(f"Unexpected keys in state_dict: {unexpected_keys}")
+
         return FrameworkModel
 
     @staticmethod

@@ -11,6 +11,12 @@ set -e
 cd "$(dirname "$0")"
 REPO_ROOT="$(pwd)"
 
+# ── Auto-fix broken flash-attn ────────────────────────────────────────
+python -c "import flash_attn" 2>/dev/null && {
+    echo "Removing pre-installed flash-attn (replaced by sdpa)..."
+    pip uninstall flash-attn -y 2>/dev/null || true
+} || true
+
 LIBERO_HOME="${LIBERO_HOME:-${REPO_ROOT}/LIBERO}"
 export LIBERO_HOME
 export LIBERO_CONFIG_PATH="${LIBERO_HOME}/libero"
