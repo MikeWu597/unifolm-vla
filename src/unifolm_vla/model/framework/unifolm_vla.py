@@ -116,37 +116,61 @@ class Unifolm_VLA(baseframework):
         """
         LLM Head: autoregressive text generation for agent reasoning and tool calls.
 
-        Reuses the Qwen2.5-VL backbone's built-in lm_head (nn.Linear(3584, vocab_size))
-        via model.generate(). This is the second head — independent from predict_action().
-
-        Args:
-            qwen_inputs: dict with input_ids, attention_mask, pixel_values, image_grid_thw
-            max_new_tokens: max tokens to generate (default 256)
-            do_sample: whether to sample (False = greedy)
-            temperature: sampling temperature
-            **kwargs: passed to model.generate()
-
-        Returns:
-            str: decoded text output (may contain <tool_call>...</tool_call> blocks)
+        Manual greedy decode with KV cache. Uses the SAME forward path as
+        predict_action() to ensure images are properly embedded via the
+        Qwen2.5-VL vision encoder.
         """
-        # Route to the Qwen model's native generate (lm_head is built-in)
-        with torch.autocast("cuda", dtype=torch.bfloat16):
-            generated_ids = self.qwen_vl_interface.model.generate(
-                input_ids=qwen_inputs["input_ids"],
-                attention_mask=qwen_inputs["attention_mask"],
-                pixel_values=qwen_inputs.get("pixel_values", None),
-                image_grid_thw=qwen_inputs.get("image_grid_thw", None),
-                max_new_tokens=max_new_tokens,
-                do_sample=do_sample,
-                temperature=temperature,
-                pad_token_id=self.processor.tokenizer.pad_token_id,
-                eos_token_id=self.processor.tokenizer.eos_token_id,
-                **kwargs,
-            )
+        import torch.nn.functional as F
 
-        # Decode only the newly generated tokens (skip input prompt)
-        input_len = qwen_inputs["input_ids"].shape[1]
-        new_tokens = generated_ids[0][input_len:]
-        text = self.processor.decode(new_tokens, skip_special_tokens=False)
+        model = self.qwen_vl_interface.model
+        tokenizer = self.processor.tokenizer
+        device = qwen_inputs["input_ids"].device
+        eos_id = tokenizer.eos_token_id
+
+        input_ids = qwen_inputs["input_ids"]          # full prompt with image tokens
+        attn_mask = qwen_inputs["attention_mask"]
+        pix_vals = qwen_inputs["pixel_values"]
+        grid_thw = qwen_inputs["image_grid_thw"]
+
+        generated_ids = []
+        past_kv = None
+
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            for step in range(max_new_tokens):
+                is_first = (step == 0)
+
+                outputs = model(
+                    input_ids=input_ids if is_first else input_ids[:, -1:],
+                    attention_mask=attn_mask,
+                    pixel_values=pix_vals if is_first else None,
+                    image_grid_thw=grid_thw if is_first else None,
+                    past_key_values=past_kv,
+                    use_cache=True,
+                    output_hidden_states=False,
+                    return_dict=True,
+                )
+
+                past_kv = outputs.past_key_values
+                logits = outputs.logits[:, -1, :]  # [1, vocab]
+
+                if do_sample and temperature > 0:
+                    logits = logits / temperature
+                    probs = F.softmax(logits, dim=-1)
+                    next_id = torch.multinomial(probs, num_samples=1)
+                else:
+                    next_id = torch.argmax(logits, dim=-1, keepdim=True)
+
+                token_id = next_id.item()
+                generated_ids.append(token_id)
+
+                if token_id == eos_id:
+                    break
+
+                # Extend attention mask for the new token
+                attn_mask = torch.cat(
+                    [attn_mask, torch.ones(1, 1, device=device, dtype=attn_mask.dtype)], dim=1
+                )
+
+        text = tokenizer.decode(generated_ids, skip_special_tokens=False)
         return text
 

@@ -1,13 +1,13 @@
 import torch
 import torch.nn as nn
-from typing import Optional, List
+from typing import Optional, List, Dict
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-from transformers.modeling_outputs import CausalLMOutputWithPast
-from typing import Dict, Optional, List
 from qwen_vl_utils import process_vision_info
 from accelerate.logging import get_logger
 logger = get_logger(__name__)
+
+# Lazy import: Qwen2_5_VLForConditionalGeneration triggers flash_attn .so loading
+# which may be broken. Imported inside __init__ instead.
 
 IGNORE_INDEX = -100
 
@@ -61,22 +61,27 @@ class _QWen_VL_Interface(nn.Module):
         """
         super().__init__()
 
+        from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+
         qwenvl_config = config.framework.get("qwenvl", {})
         model_id = qwenvl_config.get("base_vlm", "Qwen/Qwen2.5-VL-7B-Instruct")
 
-        # Auto-select attention backend: prefer flash_attn, fallback to sdpa
-        try:
-            import flash_attn  # noqa: F401
-            attn_impl = "flash_attention_2"
-        except ImportError:
-            attn_impl = "sdpa"
-
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            model_id,
-            attn_implementation=attn_impl,
-            torch_dtype=torch.bfloat16,
-            device_map="cuda",
-        )
+        # Try flash_attention_2 first, fallback to sdpa if it crashes
+        for attn_impl in ("flash_attention_2", "sdpa"):
+            try:
+                model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                    model_id,
+                    attn_implementation=attn_impl,
+                    torch_dtype=torch.bfloat16,
+                    device_map="cuda",
+                )
+                break
+            except (ImportError, OSError, RuntimeError) as e:
+                import sys
+                print(f"[QWen2_5] attn_implementation={attn_impl} failed: {e}", file=sys.stderr)
+                if attn_impl == "sdpa":
+                    raise
+                continue
         processor = AutoProcessor.from_pretrained(model_id)
         processor.tokenizer.padding_side = "left"
         
