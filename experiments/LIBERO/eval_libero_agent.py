@@ -23,6 +23,12 @@ import logging
 import math
 import os
 import pathlib
+
+# torch 2.6+: LIBERO uses torch.load with old numpy pickles → need safe_globals
+import torch
+import numpy as np
+torch.serialization.add_safe_globals([np.core.multiarray._reconstruct])
+torch.serialization.add_safe_globals([np._core.multiarray._reconstruct])
 from pathlib import Path
 import time
 from collections import deque

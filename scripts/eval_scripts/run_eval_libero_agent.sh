@@ -72,9 +72,10 @@ export TORCH_FORCE_WEIGHTS_ONLY_LOAD=0
 # Headless rendering for LIBERO (cloud GPU compatibility)
 export MUJOCO_GL="${MUJOCO_GL:-osmesa}"
 
-# Guard: TensorFlow 2.15 crashes with numpy>=2
+# Guard: TensorFlow 2.15 crashes with numpy>=2 → auto-fix
 python -c "import numpy; exit(0 if numpy.__version__ < '2' else 1)" 2>/dev/null || {
-    echo "WARNING: numpy>=2 detected, TensorFlow will crash. Run: pip install 'numpy<2' --force-reinstall"
+    echo "Auto-fixing numpy>=2 → numpy<2..."
+    pip install "numpy<2" --force-reinstall -q
 }
 
 conda activate unifolm-vla 2>/dev/null || true

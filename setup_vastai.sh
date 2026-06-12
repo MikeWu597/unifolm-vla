@@ -46,8 +46,18 @@ fi
 echo "[3/7] Installing core dependencies..."
 pip install --upgrade pip
 
-# torch 2.6 required for flash-attn compatibility
-pip install torch==2.6.0 torchvision --index-url https://download.pytorch.org/whl/cu124
+# Auto-detect CUDA version: 5090/Blackwell needs torch>=2.7 with cu128+
+CUDA_VER=$(nvidia-smi | grep -oP 'CUDA Version: \K[0-9.]+' 2>/dev/null || echo "12.4")
+CUDA_MAJOR=$(echo "$CUDA_VER" | cut -d. -f1)
+if [ "$CUDA_MAJOR" -ge 13 ]; then
+    TORCH_INDEX="https://download.pytorch.org/whl/cu128"
+    TORCH_SPEC="torch>=2.7"
+else
+    TORCH_INDEX="https://download.pytorch.org/whl/cu124"
+    TORCH_SPEC="torch==2.6.0"
+fi
+echo "CUDA ${CUDA_VER} → installing ${TORCH_SPEC} from ${TORCH_INDEX}"
+pip install "${TORCH_SPEC}" torchvision --index-url "${TORCH_INDEX}"
 
 # ML stack
 pip install transformers==4.52.3
