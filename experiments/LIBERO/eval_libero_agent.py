@@ -185,7 +185,7 @@ def get_agent_qwen_inputs(
     model: Unifolm_VLA_Inference,
     agent_prompt: str,
 ):
-    """Build qwen_inputs for the LLM Head (agent check)."""
+    """Build qwen_inputs for the LLM Head using the VANILLA agent processor."""
     all_images = []
     for obs in observations:
         all_images.append(obs["full_image"])
@@ -204,11 +204,13 @@ def get_agent_qwen_inputs(
         },
     ]
 
-    text_processed = model.vla.qwen_vl_interface.processor.apply_chat_template(
+    # Use agent_processor (vanilla Qwen2.5-VL) — NOT the fine-tuned VLA processor
+    agent_proc = model.vla.agent_processor
+    text_processed = agent_proc.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
     image_inputs, video_inputs = process_vision_info(messages)
-    qwen_inputs = model.vla.qwen_vl_interface.processor(
+    qwen_inputs = agent_proc(
         text=text_processed,
         images=image_inputs,
         videos=video_inputs,
