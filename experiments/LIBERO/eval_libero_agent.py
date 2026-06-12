@@ -33,7 +33,7 @@ torch.load = lambda *a, **kw: _orig_load(*a, **{'weights_only': False, **kw})
 from pathlib import Path
 import time
 from collections import deque
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import imageio
 import numpy as np
@@ -114,6 +114,7 @@ from unifolm_vla.agent.agent_loop import ToolCallAgent, AgentDecision
 
 from experiments.LIBERO.libero_utils import DATE_TIME, DATE
 from experiments.LIBERO.unifolm_vla_inference import Unifolm_VLA_Inference
+from unifolm_vla.agent.tool_call_parser import ToolCallParser
 from experiments.LIBERO.libero_utils import (
     get_libero_image,
     get_libero_wrist_image,
@@ -295,10 +296,13 @@ def agent_plan(
     model: Unifolm_VLA_Inference,
     obs_queue: deque,
     task_description: str,
+    history: Optional[List[dict]] = None,
     log_file=None,
-) -> AgentDecision:
+) -> Tuple[AgentDecision, List[dict]]:
     """
     Initial agent planning: look at the scene and decide the first VLA instruction.
+
+    Returns (AgentDecision, updated_history).
     """
     raw_images = []
     for obs in obs_queue:
@@ -317,24 +321,25 @@ def agent_plan(
     )
 
     try:
-        text = model.vla.predict_text(
+        text, history = model.vla.predict_text(
             images=raw_images,
             prompt_text=plan_prompt,
             max_new_tokens=512,
             temperature=0.1,
+            history=history,
         )
     except Exception as e:
         logger.warning(f"Agent plan failed: {e}. Using original task.")
-        return AgentDecision(action="new_instruction", instruction=task_description)
+        return AgentDecision(action="new_instruction", instruction=task_description), history
 
     log_message(f"[Agent Plan] {text}", log_file)
 
     if not ToolCallParser.has_tool_call(text):
-        return AgentDecision(action="new_instruction", instruction=task_description)
+        return AgentDecision(action="new_instruction", instruction=task_description), history
 
     tool_calls = ToolCallParser.parse(text)
     if not tool_calls:
-        return AgentDecision(action="new_instruction", instruction=task_description)
+        return AgentDecision(action="new_instruction", instruction=task_description), history
 
     tc = tool_calls[0]
     args = tc.get("arguments", {})
@@ -343,7 +348,7 @@ def agent_plan(
         instruction=args.get("instruction", task_description),
         reason=args.get("reason", ""),
         max_vla_steps=args.get("max_vla_steps", 50),
-    )
+    ), history
 
 
 def agent_check(
@@ -353,40 +358,36 @@ def agent_check(
     task_description: str,
     step_counter: int,
     max_steps: int,
-    env_done: bool = False,
+    history: Optional[List[dict]] = None,
     log_file=None,
-) -> AgentDecision:
+) -> Tuple[AgentDecision, str, List[dict]]:
     """
     Run the LLM Head to check task progress.
 
-    Returns (AgentDecision, raw_text) tuple.
+    Returns (AgentDecision, raw_text, updated_history) tuple.
     """
-    # Build agent prompt with few-shot examples
-    env_hint = ""
-    if env_done:
-        env_hint = "The environment signals the task may be done. Verify visually: is the goal state actually achieved?\n\n"
-
     agent_prompt = (
-        f"You monitor a robot VLA model. Look at the image and decide.\n\n"
+        f"You monitor a VLA robot arm. Look at the image and decide.\n\n"
         f'Task: "{task_description}"\n'
-        f"Steps done: {step_counter} / {max_steps}.\n"
-        f"{env_hint}\n"
-        f"If task is in progress, just describe what you see briefly.\n"
-        f"If the robot needs a new instruction, output a tool call.\n"
-        f"If the task is done, output terminate.\n\n"
+        f"Steps used: {step_counter} / {max_steps}.\n\n"
+        f"RULES:\n"
+        f"- If the robot is still moving/reaching/grasping normally → just describe. NO tool call.\n"
+        f"- If the robot is stuck, doing wrong action, or needs redirection → call_vla with a corrected instruction.\n"
+        f"- If the task is FULLY COMPLETE (bowl IS on plate) → terminate.\n"
+        f"- NEVER call terminate unless the goal is visually achieved.\n\n"
         f"--- Examples ---\n\n"
-        f"Example 1 — task looks complete:\n"
+        f"Example 1 — task COMPLETE, bowl IS on plate:\n"
         f"<tool_call>\n"
-        f'{{"name":"terminate","arguments":{{"success":true,"reason":"bowl is on the plate"}}}}\n'
+        f'{{"name":"terminate","arguments":{{"reason":"bowl is centered on the plate, task done"}}}}\n'
         f"</tool_call>\n\n"
-        f"Example 2 — robot is stuck, need new instruction:\n"
+        f"Example 2 — robot stuck, missed the target:\n"
         f"<tool_call>\n"
-        f'{{"name":"call_vla","arguments":{{"instruction":"move the black bowl left by 3cm and place it on the plate","reason":"bowl missed the plate","max_vla_steps":30}}}}\n'
+        f'{{"name":"call_vla","arguments":{{"instruction":"move the black bowl 3cm to the right and place it on the plate","reason":"bowl missed the plate, needs correction","max_vla_steps":30}}}}\n'
         f"</tool_call>\n\n"
-        f"Example 3 — normal progress, no tool needed:\n"
+        f"Example 3 — normal progress, still moving:\n"
         f"The robot is reaching toward the bowl. Continuing.\n\n"
         f"--- End Examples ---\n\n"
-        f"Now analyze the current observation:"
+        f"Current observation:"
     )
 
     # Collect raw images for the API call
@@ -398,30 +399,29 @@ def agent_check(
 
     # Call agent API (Bailian Qwen-VL)
     try:
-        text = model.vla.predict_text(
+        text, history = model.vla.predict_text(
             images=raw_images,
             prompt_text=agent_prompt,
             max_new_tokens=2048,
             temperature=0.1,
+            history=history,
         )
     except Exception as e:
         logger.warning(f"Agent API failed: {e}. Defaulting to continue.")
         log_message(f"[Agent] API error: {e}. Continue.", log_file)
-        return AgentDecision(action="continue", reason=f"api error: {e}"), ""
+        return AgentDecision(action="continue", reason=f"api error: {e}"), "", history
 
     log_message(f"[Agent] Raw output: {text}", log_file)
 
     # Parse
-    from unifolm_vla.agent.tool_call_parser import ToolCallParser
-
     if not ToolCallParser.has_tool_call(text):
         reasoning = ToolCallParser.extract_reasoning(text)
         log_message(f"[Agent] Decision: continue — {reasoning}", log_file)
-        return AgentDecision(action="continue", reason=reasoning or "normal progress"), text
+        return AgentDecision(action="continue", reason=reasoning or "normal progress"), text, history
 
     tool_calls = ToolCallParser.parse(text)
     if not tool_calls:
-        return AgentDecision(action="continue", reason="parse failed"), text
+        return AgentDecision(action="continue", reason="parse failed"), text, history
 
     tc = tool_calls[0]
     name = tc.get("name", "")
@@ -434,7 +434,7 @@ def agent_check(
             success=args.get("success", False),
         )
         log_message(f"[Agent] Decision: terminate — {decision.reason}", log_file)
-        return decision, text
+        return decision, text, history
     elif name == "call_vla":
         decision = AgentDecision(
             action="new_instruction",
@@ -447,10 +447,10 @@ def agent_check(
             f"(reason: {decision.reason})",
             log_file,
         )
-        return decision, text
+        return decision, text, history
     else:
         log_message(f"[Agent] Decision: continue — unknown tool '{name}'", log_file)
-        return AgentDecision(action="continue", reason=f"unknown tool: {name}"), text
+        return AgentDecision(action="continue", reason=f"unknown tool: {name}"), text, history
 
 
 # ---------------------------------------------------------------------------
@@ -536,10 +536,11 @@ def eval_libero_agent(args: Args) -> None:
                 observation, img = prepare_observation(obs, resize_size=224)
                 obs_queue.append(observation)
 
-            plan_decision = agent_plan(
+            plan_decision, agent_history = agent_plan(
                 model=model,
                 obs_queue=obs_queue,
                 task_description=task_description,
+                history=None,
                 log_file=log_file,
             )
             current_instruction = plan_decision.instruction or task_description
@@ -586,6 +587,12 @@ def eval_libero_agent(args: Args) -> None:
 
                 obs, reward, done_flag, info = env.step(action_processed.tolist())
 
+                # LIBERO is the ground truth for success
+                if done_flag:
+                    success = True
+                    done = True
+                    break
+
                 # Record for agent
                 agent.record_obs(observation)
                 agent.record_action(action)
@@ -594,22 +601,16 @@ def eval_libero_agent(args: Args) -> None:
                 step += 1
                 agent_step_counter += 1
 
-                # ── Agent check: every N steps OR when env signals done ───
-                trigger_check = (
-                    agent_step_counter >= args.vla_interval
-                    or done_flag
-                    or t >= max_steps + args.num_steps_wait - 1
-                )
-
-                if trigger_check and not done:
-                    decision, agent_text = agent_check(
+                # ── Agent check: every N steps ───────────────────────
+                if agent_step_counter >= args.vla_interval and not done:
+                    decision, agent_text, agent_history = agent_check(
                         model=model,
                         agent=agent,
                         obs_queue=obs_queue,
                         task_description=task_description,
                         step_counter=step,
                         max_steps=max_steps,
-                        env_done=done_flag,
+                        history=agent_history,
                         log_file=log_file,
                     )
 
@@ -620,14 +621,11 @@ def eval_libero_agent(args: Args) -> None:
                     if decision.action == "new_instruction":
                         agent_lines.append(f"  TOOL: call_vla → {decision.instruction[:80]}")
                     elif decision.action == "terminate":
-                        status = "SUCCESS" if decision.success else "FAIL"
-                        agent_lines.append(f"  TOOL: terminate ({status}): {decision.reason[:80]}")
+                        agent_lines.append(f"  terminate IGNORED (env not done): {decision.reason[:80]}")
 
-                    agent_color = "green" if decision.action == "terminate" and decision.success else \
-                                  "red" if decision.action == "terminate" else "yellow"
+                    agent_color = "red" if decision.action == "terminate" else "yellow"
                     agent_frame = draw_overlay(img_annotated, agent_lines, agent_color)
 
-                    # Pause: insert 0.5s of duplicate agent frames
                     pause_frames = int(AGENT_PAUSE_SEC * VIDEO_FPS)
                     for _ in range(pause_frames):
                         replay_images.append(agent_frame)
@@ -640,7 +638,7 @@ def eval_libero_agent(args: Args) -> None:
                         tool_args = decision.instruction or ""
                     elif decision.action == "terminate":
                         tool_name = "terminate"
-                        tool_args = f"success={decision.success}, {decision.reason}"
+                        tool_args = decision.reason
                     csv_w.writerow([
                         total_episodes + 1, task_description, step, agent.agent_round,
                         "agent", agent_text_short, tool_name, tool_args, decision.action
@@ -648,21 +646,19 @@ def eval_libero_agent(args: Args) -> None:
                     csv_f.flush()
 
                     if decision.action == "terminate":
-                        done = True
-                        success = decision.success
+                        # Agent claims done — but only LIBERO confirms. Ignore, keep going.
                         log_message(
-                            f"[Agent] Episode terminated: success={success}, "
-                            f"reason={decision.reason}",
-                            log_file,
+                            f"[Agent] Called terminate (ignored — env not done yet): {decision.reason}",
+                            log_file
                         )
+                        agent_step_counter = 0
                     elif decision.action == "new_instruction" and decision.instruction:
                         agent_interventions += 1
                         current_instruction = decision.instruction
                         model.reset(task_description=current_instruction)
                         action_queue.clear()
                         log_message(
-                            f"[Agent] New instruction: {current_instruction}",
-                            log_file,
+                            f"[Agent] New instruction: {current_instruction}", log_file
                         )
 
                     agent_step_counter = 0
@@ -677,15 +673,15 @@ def eval_libero_agent(args: Args) -> None:
                 task_successes += 1
                 total_successes += 1
 
-            # Save failure video
-            if not success:
-                task_segment = task_description.replace(" ", "_")
-                imageio.mimwrite(
-                    pathlib.Path(args.video_out_path)
-                    / f"agent_rollout_{task_segment}_ep{episode_idx}_failure.mp4",
-                    [np.asarray(x) for x in replay_images],
-                    fps=10,
-                )
+            # Save video for every episode
+            task_segment = task_description.replace(" ", "_")
+            suffix = "success" if success else "failure"
+            imageio.mimwrite(
+                pathlib.Path(args.video_out_path)
+                / f"agent_{task_segment}_ep{episode_idx}_{suffix}.mp4",
+                [np.asarray(x) for x in replay_images],
+                fps=VIDEO_FPS,
+            )
 
             log_message(f"Success: {success}", log_file)
             log_message(

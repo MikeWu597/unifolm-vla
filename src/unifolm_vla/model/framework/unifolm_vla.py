@@ -56,13 +56,13 @@ class Unifolm_VLA(baseframework):
         self.action_model: FlowmatchingActionHead = get_action_model(config=self.config)
 
         # ── Agent: Bailian Qwen-VL API ─────────────────────────────
-        # Model: qwen3-vl-flash / qwen-vl-plus / qwen2.5-vl-72b-instruct
+        # Model: qwen3-vl-plus / qwen-vl-plus / qwen2.5-vl-72b-instruct
         # Secrets: DASHSCOPE_API_KEY
         if agent_model_id is None and config is not None:
             agent_cfg = config.framework.get("agent_vlm", {})
-            agent_model_id = agent_cfg.get("base_vlm", "qwen3-vl-flash")
+            agent_model_id = agent_cfg.get("base_vlm", "qwen3-vl-plus")
         elif agent_model_id is None:
-            agent_model_id = os.environ.get("AGENT_VLM_MODEL", "qwen3-vl-flash")
+            agent_model_id = os.environ.get("AGENT_VLM_MODEL", "qwen3-vl-plus")
 
         self.agent_model_id = agent_model_id
         self._agent_client = None  # lazy init
@@ -147,18 +147,24 @@ class Unifolm_VLA(baseframework):
         self,
         images: List[np.ndarray],
         prompt_text: str,
-        max_new_tokens: int = 512,
+        max_new_tokens: int = 2048,
         temperature: float = 0.1,
-    ) -> str:
+        history: Optional[List[dict]] = None,
+    ) -> Tuple[str, List[dict]]:
         """
-        Call Bailian Qwen-VL API for agent reasoning + tool calling.
+        Call Bailian Qwen-VL API with multi-turn conversation history.
 
         Args:
             images: list of numpy RGB images (H, W, 3) uint8
             prompt_text: agent monitoring prompt
             max_new_tokens: max tokens to generate
-            temperature: sampling temperature (low = more deterministic)
+            temperature: sampling temperature
+            history: previous messages (text-only). Modified in-place.
+
+        Returns:
+            (response_text, updated_history) tuple.
         """
+        # Build current user message with images
         content = []
         for img in images:
             content.append({
@@ -167,15 +173,27 @@ class Unifolm_VLA(baseframework):
             })
         content.append({"type": "text", "text": prompt_text})
 
+        user_msg = {"role": "user", "content": content}
+
+        # Build full message list: history (text-only) + current (with images)
+        messages = (history or []) + [user_msg]
+
         try:
             response = self.agent_client.chat.completions.create(
                 model=self.agent_model_id,
-                messages=[{"role": "user", "content": content}],
+                messages=messages,
                 max_tokens=max_new_tokens,
                 temperature=temperature,
             )
-            return response.choices[0].message.content or ""
+            reply = response.choices[0].message.content or ""
+
+            # Update history: add user text summary + assistant reply (text-only, no images)
+            new_history = (history or []) + [
+                {"role": "user", "content": [{"type": "text", "text": prompt_text[-500:]}]},
+                {"role": "assistant", "content": reply},
+            ]
+            return reply, new_history
         except Exception as e:
             import sys
             print(f"[Agent API] Error: {e}", file=sys.stderr)
-            return ""
+            return "", (history or [])
