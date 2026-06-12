@@ -104,3 +104,49 @@ class Unifolm_VLA(baseframework):
         
         return {"normalized_actions": normalized_actions}
 
+    @torch.inference_mode()
+    def predict_text(
+        self,
+        qwen_inputs,
+        max_new_tokens: int = 256,
+        do_sample: bool = False,
+        temperature: float = 1.0,
+        **kwargs,
+    ) -> str:
+        """
+        LLM Head: autoregressive text generation for agent reasoning and tool calls.
+
+        Reuses the Qwen2.5-VL backbone's built-in lm_head (nn.Linear(3584, vocab_size))
+        via model.generate(). This is the second head — independent from predict_action().
+
+        Args:
+            qwen_inputs: dict with input_ids, attention_mask, pixel_values, image_grid_thw
+            max_new_tokens: max tokens to generate (default 256)
+            do_sample: whether to sample (False = greedy)
+            temperature: sampling temperature
+            **kwargs: passed to model.generate()
+
+        Returns:
+            str: decoded text output (may contain <tool_call>...</tool_call> blocks)
+        """
+        # Route to the Qwen model's native generate (lm_head is built-in)
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            generated_ids = self.qwen_vl_interface.model.generate(
+                input_ids=qwen_inputs["input_ids"],
+                attention_mask=qwen_inputs["attention_mask"],
+                pixel_values=qwen_inputs.get("pixel_values", None),
+                image_grid_thw=qwen_inputs.get("image_grid_thw", None),
+                max_new_tokens=max_new_tokens,
+                do_sample=do_sample,
+                temperature=temperature,
+                pad_token_id=self.processor.tokenizer.pad_token_id,
+                eos_token_id=self.processor.tokenizer.eos_token_id,
+                **kwargs,
+            )
+
+        # Decode only the newly generated tokens (skip input prompt)
+        input_len = qwen_inputs["input_ids"].shape[1]
+        new_tokens = generated_ids[0][input_len:]
+        text = self.processor.decode(new_tokens, skip_special_tokens=False)
+        return text
+
