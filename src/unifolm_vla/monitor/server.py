@@ -143,10 +143,11 @@ async def index():
 .entry .time{color:#888;font-size:11px}</style></head><body>
 <div id="video"><img src="/video"/></div>
 <div id="panel"><h3 style="margin:0 0 10px;color:#4af">MiniCPM-o-4.5</h3><div id="txt"></div></div>
-<script>const s=new EventSource("/stream");s.onmessage=e=>{const d=JSON.parse(e.data);
-const div=document.createElement("div");div.className="entry";
-div.innerHTML='<span class="time">'+d.time+'</span><br>'+d.text.replace(/\\n/g,"<br>");
-document.getElementById("txt").prepend(div)}</script></body></html>""")
+<script>let c=0;setInterval(async()=>{try{const r=await fetch("/texts?since="+c);
+const d=await r.json();d.texts.forEach(t=>{const div=document.createElement("div");
+div.className="entry";div.innerHTML='<span class="time">'+t.time+'</span><br>'
++t.text.replace(/\\n/g,"<br>");document.getElementById("txt").prepend(div)});
+c=d.total}catch(e){}},1500)</script></body></html>""")
 
 
 @app.get("/video")
@@ -167,8 +168,15 @@ async def video():
 
 @app.get("/stream")
 async def stream():
+    """SSE — works with direct SSH tunnel. Cloudflare may buffer this."""
     async def gen():
-        idx = 0
+        with _texts_lock:
+            for entry in _texts:
+                t = time.strftime("%H:%M:%S", time.localtime(entry["time"]))
+                import json
+                data = json.dumps({"time": t, "text": entry["text"]})
+                yield f"data: {data}\n\n"
+        idx = len(_texts)
         while True:
             if idx < len(_texts):
                 with _texts_lock:
@@ -181,6 +189,16 @@ async def stream():
                     yield f"data: {data}\n\n"
             await asyncio.sleep(0.5)
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.get("/texts")
+async def texts(since: int = 0):
+    """Polling fallback for Cloudflare tunnels (blocks SSE)."""
+    import json
+    with _texts_lock:
+        all_texts = [{"time": time.strftime("%H:%M:%S", time.localtime(e["time"])),
+                       "text": e["text"]} for e in _texts[since:]]
+    return {"texts": all_texts, "count": len(_texts), "total": len(_texts)}
 
 
 @app.post("/frame")
