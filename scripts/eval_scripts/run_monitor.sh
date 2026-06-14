@@ -42,9 +42,16 @@ conda activate minicpm
 pip install -q "setuptools<70" accelerate "transformers==4.51.0" 2>/dev/null || true
 pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cu124 2>/dev/null || true
 pip install -q fastapi uvicorn pillow numpy 2>/dev/null || true
-pip install -q "minicpmo-utils[all]>=1.0.5" 2>/dev/null || true
-pip install -q librosa soundfile 2>/dev/null || true
+pip install -q "minicpmo-utils[all]>=1.0.5" librosa soundfile 2>/dev/null || true
+pip install -e . --no-deps -q 2>/dev/null || true
+pip install "numpy<2" --force-reinstall -q 2>/dev/null || true
 conda activate unifolm-vla
+pip install -e . --no-deps -q 2>/dev/null || true
+pip install -q requests 2>/dev/null || true
+pip install "numpy<2" --force-reinstall -q 2>/dev/null || true
+
+# CRLF cleanup (Windows Git → Linux)
+find "${REPO_ROOT}" -name "*.py" -exec sed -i 's/\r$//' {} \; 2>/dev/null || true
 
 # ── Kill any old server ──────────────────────────────────────────────
 fuser -k ${PORT}/tcp 2>/dev/null || true
