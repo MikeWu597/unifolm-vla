@@ -134,7 +134,7 @@ conda create -n minicpm python==3.10.18 -y 2>/dev/null || true
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate minicpm
 pip install -q "setuptools<70" accelerate "transformers==4.51.0" 2>/dev/null || true
-pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cu124 2>/dev/null || true
+pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 2>/dev/null || true
 pip install -q fastapi uvicorn pillow numpy 2>/dev/null || true
 pip install -q "minicpmo-utils[all]>=1.0.5" librosa soundfile 2>/dev/null || true
 pip install -e "$(pwd)" --no-deps -q 2>/dev/null || true
