@@ -55,6 +55,11 @@ class MiniCPMClient:
         else:
             load_kwargs["torch_dtype"] = torch.bfloat16
 
+        # Patch: MiniCPM-o's Resampler lacks _initialize_weights (required by transformers 4.52)
+        import torch.nn as nn
+        if not hasattr(nn.Module, '_initialize_weights'):
+            nn.Module._initialize_weights = lambda self, m: None
+
         self.model = AutoModel.from_pretrained(self.model_id, **load_kwargs)
         self.model.eval()
         self.processor = AutoProcessor.from_pretrained(self.model_id, trust_remote_code=True)

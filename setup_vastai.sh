@@ -57,8 +57,7 @@ pip install --upgrade pip
 pip install "torch>=2.6" torchvision --index-url https://download.pytorch.org/whl/cu124
 
 # Core ML dependencies
-# MiniCPM-o-4.5 requires 4.51.x (VLA compatible)
-pip install transformers==4.51.0
+pip install transformers==4.52.3
 pip install accelerate==1.5.2
 pip install diffusers==0.35.1
 pip install qwen-vl-utils
