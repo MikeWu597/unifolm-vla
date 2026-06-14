@@ -16,7 +16,7 @@ from PIL import Image
 class MiniCPMClient:
     """Local MiniCPM-o-4.5 for real-time VLA observation."""
 
-    def __init__(self, model_id: str = "openbmb/MiniCPM-o-4.5", use_int4: bool = True):
+    def __init__(self, model_id: str = "openbmb/MiniCPM-o-4_5", use_int4: bool = True):
         """
         Args:
             model_id: HuggingFace model id or local path
@@ -27,10 +27,17 @@ class MiniCPMClient:
         self.processor = None
         self.use_int4 = use_int4
 
-    def load(self):
+    def load(self, token: str | None = None):
         """Load the model (call once, blocks until loaded)."""
-        import sys
+        import os, sys
         from transformers import AutoModel, AutoProcessor
+
+        # HF token: env var or manual
+        hf_token = token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+        if not hf_token:
+            # Try huggingface-cli login cache
+            from huggingface_hub import HfFolder
+            hf_token = HfFolder.get_token()
 
         print(f"[MiniCPM] Loading {self.model_id} (INT4={self.use_int4})...", file=sys.stderr)
         t0 = time.time()
@@ -40,6 +47,8 @@ class MiniCPMClient:
             "trust_remote_code": True,
             "device_map": "cuda",
         }
+        if hf_token:
+            load_kwargs["token"] = hf_token
         if self.use_int4:
             load_kwargs["load_in_4bit"] = True
             load_kwargs["bnb_4bit_compute_dtype"] = torch.bfloat16
@@ -95,14 +104,14 @@ _client: MiniCPMClient | None = None
 _model_loaded = threading.Event()
 
 
-def get_client(model_id: str = "openbmb/MiniCPM-o-4.5", use_int4: bool = True) -> MiniCPMClient:
+def get_client(model_id: str = "openbmb/MiniCPM-o-4_5", use_int4: bool = True) -> MiniCPMClient:
     global _client
     if _client is None:
         _client = MiniCPMClient(model_id=model_id, use_int4=use_int4)
     return _client
 
 
-def load_in_background(model_id: str = "openbmb/MiniCPM-o-4.5", use_int4: bool = True):
+def load_in_background(model_id: str = "openbmb/MiniCPM-o-4_5", use_int4: bool = True):
     """Load MiniCPM in a background thread (non-blocking)."""
     def _load():
         c = get_client(model_id, use_int4)
