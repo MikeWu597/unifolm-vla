@@ -213,12 +213,14 @@ async def health():
     return {"minicpm_loaded": _minicpm_model is not None, "texts": len(_texts)}
 
 
-# ── Entry ────────────────────────────────────────────────────────────
+# ── Startup ──────────────────────────────────────────────────────────
 
-def main(host="0.0.0.0", port=8778):
-    _load_minicpm()
-    uvicorn.run(app, host=host, port=port, log_level="info")
+@app.on_event("startup")
+def _startup_load_minicpm():
+    t = threading.Thread(target=_load_minicpm, daemon=True)
+    t.start()
 
 
 if __name__ == "__main__":
-    main()
+    _load_minicpm()
+    uvicorn.run(app, host="0.0.0.0", port=8778, log_level="info")
