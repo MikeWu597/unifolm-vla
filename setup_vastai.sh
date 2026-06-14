@@ -16,7 +16,7 @@ echo "============================================"
 # -------------------------------------------------------------------
 # 1. 检查 CUDA 版本
 # -------------------------------------------------------------------
-echo "[1/8] Checking CUDA version..."
+echo "[1/7] Checking CUDA version..."
 nvidia-smi | head -5
 if command -v nvcc &> /dev/null; then
     nvcc --version | grep "release"
@@ -27,7 +27,7 @@ fi
 # -------------------------------------------------------------------
 # 2. 创建 conda 环境
 # -------------------------------------------------------------------
-echo "[2/8] Creating conda environment..."
+echo "[2/7] Creating conda environment..."
 if ! command -v conda &> /dev/null; then
     echo "ERROR: conda not found. Please use a PyTorch/CUDA template on vast.ai."
     exit 1
@@ -40,7 +40,7 @@ conda activate unifolm-vla
 # -------------------------------------------------------------------
 # 3. 克隆仓库
 # -------------------------------------------------------------------
-echo "[3/8] Cloning UnifoLM-VLA repository..."
+echo "[3/7] Cloning UnifoLM-VLA repository..."
 if [ ! -d "unifolm-vla" ]; then
     git clone https://github.com/unitreerobotics/unifolm-vla.git
 fi
@@ -49,7 +49,7 @@ cd unifolm-vla
 # -------------------------------------------------------------------
 # 4. 安装 PyTorch + 核心依赖 (CUDA 12.4)
 # -------------------------------------------------------------------
-echo "[4/8] Installing core PyTorch + dependencies..."
+echo "[4/7] Installing core PyTorch + dependencies..."
 pip install --upgrade pip
 
 # PyTorch with CUDA 12.4
@@ -78,22 +78,10 @@ pip install huggingface_hub
 pip install fastapi uvicorn json_numpy
 
 # -------------------------------------------------------------------
-# 5. 安装 flash-attn (编译需 5-15 分钟)
+# 5. 注册包 (仅注册路径，不安装训练依赖)
 # -------------------------------------------------------------------
-echo "[5/8] Installing flash-attn (this may take 5-15 minutes)..."
-# 确保有 g++ 和 CUDA headers
-if ! command -v g++ &> /dev/null; then
-    sudo apt-get update && sudo apt-get install -y build-essential
-fi
-pip install flash-attn==2.5.6 --no-build-isolation || {
-    echo "WARNING: flash-attn 2.5.6 failed. Trying newer version..."
-    pip install "flash-attn>=2.7.0" --no-build-isolation
-}
-
-# -------------------------------------------------------------------
-# 6. 注册包 (仅注册路径，不安装训练依赖)
-# -------------------------------------------------------------------
-echo "[6/8] Registering UnifoLM-VLA package (inference-only mode)..."
+echo "[5/7] Registering UnifoLM-VLA package (inference-only mode)..."
+# flash-attn NOT needed — QWen2_5.py auto-falls-back to sdpa
 # 使用 --no-deps 跳过训练依赖 (deepspeed/wandb/tensorflow/dlimp等推理不需要)
 pip install -e . --no-deps
 
@@ -105,12 +93,14 @@ pip install tensorflow-cpu==2.15.0 2>/dev/null || pip install tensorflow==2.15.0
 # -------------------------------------------------------------------
 # 7. 安装 LIBERO 仿真环境
 # -------------------------------------------------------------------
-echo "[7/8] Cloning LIBERO..."
+echo "[6/7] Cloning LIBERO..."
 if [ ! -d "../LIBERO" ]; then
     git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git ../LIBERO
 fi
 
-echo "[8/8] Installing LIBERO + all its dependencies..."
+echo "[7/7] Installing LIBERO + dependencies + MiniCPM support..."
+# MiniCPM-o-4.5 needs bitsandbytes (INT4) + accelerate
+pip install bitsandbytes accelerate
 pip install -e ../LIBERO
 
 # LIBERO's full runtime dependencies (cumulative from libero_requirements.txt + real usage)
