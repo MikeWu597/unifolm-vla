@@ -9,6 +9,10 @@ set -e
 cd "$(dirname "$0")/../.."
 REPO_ROOT="$(pwd)"
 
+# Ensure monitor module is registered + torch/torchvision are compatible
+pip install -e . --no-deps -q 2>/dev/null || true
+pip install torch==2.6.0 torchvision --index-url https://download.pytorch.org/whl/cu124 -q 2>/dev/null || true
+
 LIBERO_HOME="${LIBERO_HOME:-${REPO_ROOT}/LIBERO}"
 export LIBERO_HOME LIBERO_CONFIG_PATH="${LIBERO_HOME}/libero"
 
@@ -38,11 +42,16 @@ echo "============================================"
 export PYTHONPATH="${LIBERO_HOME}:${REPO_ROOT}:${PYTHONPATH}"
 export TORCH_FORCE_WEIGHTS_ONLY_LOAD=0
 export MUJOCO_GL="${MUJOCO_GL:-osmesa}"
+
+# Last-resort: any dep could have pulled numpy>=2
+pip install "numpy<2" --force-reinstall -q 2>/dev/null || true
 export DASHSCOPE_API_KEY="${DASHSCOPE_API_KEY:-}"
 
 conda activate unifolm-vla 2>/dev/null || true
 
 # ── Start monitor server in background ────────────────────────────────
+# Kill any process holding port 8778
+fuser -k 8778/tcp 2>/dev/null || true
 echo "Starting monitor server on port 8778..."
 python -m uvicorn unifolm_vla.monitor.server:app --host 0.0.0.0 --port 8778 &
 SERVER_PID=$!

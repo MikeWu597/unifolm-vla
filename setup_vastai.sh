@@ -57,7 +57,8 @@ pip install --upgrade pip
 pip install "torch>=2.6" torchvision --index-url https://download.pytorch.org/whl/cu124
 
 # Core ML dependencies
-pip install transformers==4.52.3
+# MiniCPM-o-4.5 requires 4.51.x (VLA compatible)
+pip install transformers==4.51.0
 pip install accelerate==1.5.2
 pip install diffusers==0.35.1
 pip install qwen-vl-utils
@@ -105,7 +106,9 @@ fi
 echo "[7/7] Installing LIBERO + dependencies + MiniCPM support..."
 # MiniCPM-o-4.5 needs bitsandbytes (INT4) + accelerate + audio libs
 # MiniCPM-o-4.5 dependencies (vision only, no TTS/streaming)
-pip install bitsandbytes accelerate "minicpmo-utils[all]>=1.0.5" "torchaudio<=2.8.0"
+# MiniCPM-o-4.5: needs setuptools<70 (pkg_resources), INT4, audio, full-duplex core
+pip install "setuptools<70" bitsandbytes accelerate librosa soundfile
+pip install "minicpmo-utils[all]>=1.0.5" "torchaudio<=2.8.0"
 pip install -e ../LIBERO
 
 # LIBERO's full runtime dependencies (cumulative from libero_requirements.txt + real usage)
@@ -120,8 +123,9 @@ grep -rln "torch.load(" ../LIBERO/libero/ --include="*.py" | while read f; do
     sed -i 's/torch\.load(\([^,)]*\))/torch.load(\1, weights_only=False)/g' "$f"
 done
 
-# Force numpy<2 — some LIBERO deps may pull in numpy 2.x which breaks TensorFlow
+# Force numpy<2 + correct torch (minicpmo-utils may have broken it)
 pip install "numpy<2" --force-reinstall 2>/dev/null || true
+pip install torch==2.6.0 torchvision --index-url https://download.pytorch.org/whl/cu124 --force-reinstall 2>/dev/null || true
 
 # Note: mujoco version warning is harmless — LIBERO works with both 3.3.x and 3.9.x
 
