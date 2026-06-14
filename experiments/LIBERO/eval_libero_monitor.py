@@ -99,15 +99,16 @@ def prepare_observation(obs, resize_size=224):
     return observation, img  # img is the full-resolution render
 
 
-def send_frame(img: np.ndarray, status: str = ""):
-    """Push a frame to the HTTP server."""
+def send_frame(img: np.ndarray, status: str = "", step: int = 0, interval: int = 50):
+    """Push a frame to the MiniCPM HTTP server."""
     try:
         buf = io.BytesIO()
         from PIL import Image
         Image.fromarray(img).save(buf, format="JPEG", quality=JPG_QUALITY)
         b64 = base64.b64encode(buf.getvalue()).decode()
         requests.post(f"http://127.0.0.1:{MONITOR_PORT}/frame",
-                      json={"image": b64, "status": status}, timeout=1)
+                      json={"image": b64, "status": status,
+                            "step": step, "interval": interval}, timeout=1)
     except Exception:
         pass
 
@@ -195,10 +196,7 @@ def eval_libero_monitor(args: Args):
         vlm_pretrained_path=args.vlm_pretrained_path,
     )
 
-    # Load MiniCPM (background)
-    from unifolm_vla.monitor.minicpm_client import load_in_background, wait_loaded
-    load_in_background()
-    logging.info("MiniCPM loading in background...")
+    # MiniCPM runs in separate conda env — already started via run_monitor.sh
 
     total_episodes, total_successes = 0, 0
 
@@ -238,7 +236,8 @@ def eval_libero_monitor(args: Args):
                 obs, _, done_flag, _ = env.step(process_action(action).tolist())
 
                 # Push frame to monitor
-                send_frame(img_full, f"VLA | Step {step+1} | {task_description[:60]}")
+                send_frame(img_full, f"VLA | Step {step+1} | {task_description[:60]}",
+                           step=step + 1, interval=args.minicpm_interval)
 
                 if done_flag:
                     success = True
@@ -246,32 +245,6 @@ def eval_libero_monitor(args: Args):
 
                 t += 1
                 step += 1
-
-                # ── MiniCPM check ────────────────────────────────────
-                if step > 0 and step % args.minicpm_interval == 0:
-                    try:
-                        wait_loaded(timeout=10)  # make sure model is ready
-                        from unifolm_vla.monitor.minicpm_client import get_client
-                        mc = get_client()
-
-                        # Send last 4 frames for temporal context
-                        recent = replay_images[-4:] if len(replay_images) >= 4 else replay_images
-                        prompt = (
-                            f"You are watching a robot arm execute a task in a simulated kitchen. "
-                            f'Task: "{task_description}". '
-                            f"Steps completed: {step}. "
-                            f"Look at the images (chronological order) and describe:\n"
-                            f"1. What is the robot currently doing?\n"
-                            f"2. Is it making progress toward the goal?\n"
-                            f"3. Any issues (stuck, wrong object, dropped item, shaking)?\n"
-                            f"Be concise — 3-5 sentences."
-                        )
-                        text = mc.chat(recent, prompt)
-                        if text:
-                            send_text(text)
-                            logging.info(f"[MiniCPM] {text[:150]}...")
-                    except TimeoutError:
-                        logging.info(f"[MiniCPM] Model still loading, skip check")
 
             # Episode done
             total_episodes += 1
