@@ -60,7 +60,7 @@ def _load_minicpm():
         "device_map": "cuda",
         "init_vision": True,
         "init_audio": False,
-        "init_tts": False,
+        "init_tts": True,  # required for as_duplex()
     }
     if hf_token:
         kw["token"] = hf_token
