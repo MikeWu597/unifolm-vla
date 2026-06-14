@@ -105,9 +105,8 @@ fi
 echo "[7/7] Installing LIBERO + dependencies + MiniCPM support..."
 # MiniCPM-o-4.5 needs bitsandbytes (INT4) + accelerate + audio libs
 # MiniCPM-o-4.5 dependencies (vision only, no TTS/streaming)
-# MiniCPM-o-4.5: needs setuptools<70 (pkg_resources), INT4, audio, full-duplex core
-pip install "setuptools<70" bitsandbytes accelerate librosa soundfile
-pip install "minicpmo-utils[all]>=1.0.5" "torchaudio<=2.8.0"
+# MiniCPM-o-4.5 (vision-only mode, bf16, no audio/TTS/INT4 needed)
+pip install "setuptools<70" accelerate
 pip install -e ../LIBERO
 
 # LIBERO's full runtime dependencies (cumulative from libero_requirements.txt + real usage)
