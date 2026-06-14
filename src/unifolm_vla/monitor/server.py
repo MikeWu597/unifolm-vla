@@ -72,7 +72,7 @@ def _load_minicpm():
 
 
 def _run_minicpm_inference():
-    """Called periodically from eval loop via /frame. Runs in background thread."""
+    """Streaming inference: prefill frames + prompt, then stream tokens to frontend."""
     global _minicpm_model, _recent_frames
     if _minicpm_model is None:
         return
@@ -81,26 +81,68 @@ def _run_minicpm_inference():
     if len(frames) < 2:
         return
 
-    pil_images = [Image.fromarray(f).convert("RGB") for f in frames]
-    prompt = (
-        "You are watching a robot arm execute a task in a simulated kitchen. "
-        "These frames are in chronological order. Describe:\n"
-        "1. What is the robot currently doing?\n"
-        "2. Is it making progress?\n"
-        "3. Any issues (stuck, wrong object, shaking)?\n"
-        "Be concise — 2-4 sentences."
-    )
-    msgs = [{"role": "user", "content": pil_images + [prompt]}]
-
     try:
         import torch
         with torch.inference_mode():
-            resp = _minicpm_model.chat(msgs=msgs, sampling=True, temperature=0.1, max_new_tokens=256)
-        if resp:
+            m = _minicpm_model
+
+            # Reset session for fresh context
+            m.reset_session()
+            sid = "vla_monitor"
+
+            # System prompt
+            sys_msg = m.get_sys_prompt(mode="omni", language="en")
+            m.streaming_prefill(session_id=sid, msgs=[sys_msg])
+
+            # User message: frames + prompt
+            pil_images = [Image.fromarray(f).convert("RGB") for f in frames]
+            prompt = (
+                "You are watching a robot arm execute a task in a kitchen. "
+                "Describe what the robot is doing, whether it's progressing, "
+                "and any issues. Be concise."
+            )
+            user_msg = {"role": "user", "content": pil_images + [prompt]}
+            m.streaming_prefill(session_id=sid, msgs=[user_msg], omni_mode=True, is_last_chunk=True)
+
+            # Stream generate — push tokens live
+            full_text = ""
+            entry = {"time": time.time(), "text": ""}
             with _texts_lock:
-                _texts.append({"time": time.time(), "text": resp.strip()})
+                _texts.append(entry)
+            idx = len(_texts) - 1
+
+            for chunk in m.streaming_generate(
+                session_id=sid,
+                generate_audio=False,
+                use_tts_template=False,
+                enable_thinking=False,
+                do_sample=True,
+                temperature=0.1,
+                max_new_tokens=256,
+            ):
+                if isinstance(chunk, tuple):
+                    chunk = chunk[-1] or ""
+                full_text += chunk
+                with _texts_lock:
+                    _texts[idx]["text"] = full_text.strip()
+                    _texts[idx]["time"] = time.time()
+
     except Exception as e:
-        print(f"[Server] MiniCPM inference error: {e}", file=sys.stderr)
+        print(f"[Server] MiniCPM streaming error: {e}", file=sys.stderr)
+        # Fallback to chat()
+        try:
+            pil_images = [Image.fromarray(f).convert("RGB") for f in frames]
+            prompt = (
+                "You are watching a robot arm. Describe what it's doing, "
+                "progress, and any issues. Be concise."
+            )
+            msgs = [{"role": "user", "content": pil_images + [prompt]}]
+            resp = _minicpm_model.chat(msgs=msgs, sampling=True, temperature=0.1, max_new_tokens=256)
+            if resp:
+                with _texts_lock:
+                    _texts.append({"time": time.time(), "text": resp.strip()})
+        except Exception as e2:
+            print(f"[Server] MiniCPM fallback also failed: {e2}", file=sys.stderr)
 
 
 # ── Fonts ────────────────────────────────────────────────────────────
