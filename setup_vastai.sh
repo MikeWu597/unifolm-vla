@@ -103,8 +103,9 @@ if [ ! -d "../LIBERO" ]; then
 fi
 
 echo "[7/7] Installing LIBERO + dependencies + MiniCPM support..."
-# MiniCPM-o-4.5 needs bitsandbytes (INT4) + accelerate
-pip install bitsandbytes accelerate
+# MiniCPM-o-4.5 needs bitsandbytes (INT4) + accelerate + audio libs
+# MiniCPM-o-4.5 dependencies (vision only, no TTS/streaming)
+pip install bitsandbytes accelerate "minicpmo-utils[all]>=1.0.5" "torchaudio<=2.8.0"
 pip install -e ../LIBERO
 
 # LIBERO's full runtime dependencies (cumulative from libero_requirements.txt + real usage)
