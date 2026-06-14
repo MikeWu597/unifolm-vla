@@ -91,9 +91,13 @@ echo "Installing TensorFlow (CPU-only, for image preprocessing)..."
 pip install tensorflow-cpu==2.15.0 2>/dev/null || pip install tensorflow==2.15.0
 
 # -------------------------------------------------------------------
-# 7. 安装 LIBERO 仿真环境
+# 6. 安装 LIBERO 仿真环境
 # -------------------------------------------------------------------
-echo "[6/7] Cloning LIBERO..."
+echo "[6/7] Installing libosmesa6-dev (headless rendering)..."
+apt-get update -qq && apt-get install -y -qq libosmesa6-dev
+export MUJOCO_GL=osmesa
+
+echo "Cloning LIBERO..."
 if [ ! -d "../LIBERO" ]; then
     git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git ../LIBERO
 fi
