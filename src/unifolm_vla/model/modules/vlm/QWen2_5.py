@@ -63,12 +63,14 @@ class _QWen_VL_Interface(nn.Module):
 
         qwenvl_config = config.framework.get("qwenvl", {})
         model_id = qwenvl_config.get("base_vlm", "Qwen/Qwen2.5-VL-7B-Instruct")
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            model_id,
-            attn_implementation="flash_attention_2",
-            torch_dtype=torch.bfloat16,
-            device_map="cuda",
-        )
+        # sdpa — built-in, always works, no flash-attn dependency
+        for attn_impl in ("sdpa",):
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                model_id,
+                attn_implementation=attn_impl,
+                torch_dtype=torch.bfloat16,
+                device_map="cuda",
+            )
         processor = AutoProcessor.from_pretrained(model_id)
         processor.tokenizer.padding_side = "left"
         
