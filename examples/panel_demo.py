@@ -167,20 +167,22 @@ def main():
                 action_queue.clear()
                 continue
 
-            # Collect observation
-            img = get_image(env)
-            wrist_img = env.get_observation()["robot0_eye_in_hand_image"][::-1, ::-1]
-            state = get_state(env)
+            # Execute: VLA action if available, else dummy
+            if len(action_queue) > 0 and len(obs_queue) >= args.window:
+                act = action_queue.popleft()
+                act[..., -1] *= -1.0
+                obs, _, _, _ = env.step(act.tolist())
+            else:
+                obs, _, _, _ = env.step(np.array(DUMMY))
+
+            img = get_image(env, obs)
+            wrist_img = obs["robot0_eye_in_hand_image"][::-1, ::-1]
+            state = get_state(env, obs)
             push_frame(img)
 
             obs_queue.append({"full_image": img, "wrist_image": wrist_img, "state": state})
 
-            if len(obs_queue) < args.window:
-                env.step(np.array(DUMMY))
-                continue
-
-            # Get action
-            if len(action_queue) == 0:
+            if len(obs_queue) >= args.window and len(action_queue) == 0:
                 images = []
                 for o in obs_queue:
                     images.append(o["full_image"])
@@ -191,17 +193,13 @@ def main():
                 actions = unnorm_actions(raw["normalized_actions"][0], norm_stats)
                 action_queue.extend(actions)
 
-            act = action_queue.popleft()
-            act[..., -1] *= -1.0   # invert gripper (LIBERO convention)
-            env.step(act.tolist())
-
             set_status(step=s["step"] + 1)
             time.sleep(0.02)
         else:
-            # Idle — still push frames
-            img = get_image(env)
+            # Idle — still push frames with dummy steps
+            obs, _, _, _ = env.step(np.array(DUMMY))
+            img = get_image(env, obs)
             push_frame(img)
-            env.step(np.array(DUMMY))
             time.sleep(0.1)
 
 

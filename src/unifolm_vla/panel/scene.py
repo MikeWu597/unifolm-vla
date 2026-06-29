@@ -28,16 +28,14 @@ def create_scene(render_resolution: int = 512, bddl_file=None):
     return env
 
 
-def get_image(env) -> np.ndarray:
+def get_image(env, obs) -> np.ndarray:
     """RGB render from agentview camera (rotated 180° to match training)."""
-    obs = env.get_observation()
     return obs["agentview_image"][::-1, ::-1]
 
 
-def get_state(env) -> np.ndarray:
+def get_state(env, obs) -> np.ndarray:
     """7D state: eef_pos(3) + eef_quat→axisangle(3) + gripper(1)."""
     import math
-    obs = env.get_observation()
     pos = obs["robot0_eef_pos"]
     quat = obs["robot0_eef_quat"]
 
