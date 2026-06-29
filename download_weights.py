@@ -33,6 +33,8 @@ def download_with_hub(output_dir: Path, use_mirror: bool = False) -> dict[str, P
 
     if use_mirror:
         os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+        # Disable Xet (not supported by mirrors)
+        os.environ["HF_HUB_ENABLE_HF_XET"] = "0"
         logger.info("Using HF mirror: https://hf-mirror.com")
 
     paths = {}
@@ -45,7 +47,7 @@ def download_with_hub(output_dir: Path, use_mirror: bool = False) -> dict[str, P
             local_dir=str(local_path),
             local_dir_use_symlinks=False,
             resume_download=True,
-            max_workers=4,
+            max_workers=1,  # single-thread avoids mirror rate limits
         )
         paths[name] = local_path
         logger.info(f"  Done: {local_path}")
