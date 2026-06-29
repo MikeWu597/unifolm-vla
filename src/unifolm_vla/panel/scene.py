@@ -16,14 +16,12 @@ def create_scene(render_resolution: int = 512) -> tuple:
     Returns (env, task_description) tuple.
     task_description is a placeholder — actual instruction comes from the browser.
     """
-    import robosuite.controllers.composite.composite_osc as _  # register OSC_POSE
-    from robosuite.controllers import load_part_controller_config
-    ctrl = load_part_controller_config(default_controller="OSC_POSE")
+    # Use JOINT_VELOCITY — always available, no special imports needed
 
     config = {
         "env_name": "Lift",
         "robots": "Panda",
-        "controller_configs": ctrl,
+        "controller_configs": None,  # default controller
         "has_renderer": False,
         "has_offscreen_renderer": True,
         "render_camera": "agentview",
