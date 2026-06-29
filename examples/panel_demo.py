@@ -120,7 +120,7 @@ def main():
     # ── Create scene ───────────────────────────────────────────────────
     logger.info("Creating robosuite scene...")
     env = create_scene(render_resolution=512)
-    obs = env.reset()
+    env.reset()
 
     # ── Start server ──────────────────────────────────────────────────
     from unifolm_vla.panel.server import app as server_app, push_frame, \
@@ -169,37 +169,39 @@ def main():
 
             # Collect observation
             img = get_image(env)
+            wrist_img = env.get_observation()["robot0_eye_in_hand_image"][::-1, ::-1]
             state = get_state(env)
             push_frame(img)
 
-            obs_queue.append({"full_image": img, "state": state})
+            obs_queue.append({"full_image": img, "wrist_image": wrist_img, "state": state})
 
             if len(obs_queue) < args.window:
-                obs, _, _, _ = env.step(DUMMY)
+                env.step(np.array(DUMMY))
                 continue
 
             # Get action
             if len(action_queue) == 0:
-                images = [o["full_image"] for o in obs_queue]
+                images = []
+                for o in obs_queue:
+                    images.append(o["full_image"])
+                for o in obs_queue:
+                    images.extend([o[k] for k in o.keys() if "wrist" in k])
                 q_in = build_inputs(images, current_instruction, state, model, norm_stats)
                 raw = model.predict_action(q_in)
                 actions = unnorm_actions(raw["normalized_actions"][0], norm_stats)
-                # Swap gripper sign (LIBERO convention)
-                actions[..., -1] *= -1.0
                 action_queue.extend(actions)
 
             act = action_queue.popleft()
-            obs, _, _, _ = env.step(act.tolist())
+            act[..., -1] *= -1.0   # invert gripper (LIBERO convention)
+            env.step(act.tolist())
 
             set_status(step=s["step"] + 1)
-
-            # Small sleep to not overwhelm
             time.sleep(0.02)
         else:
             # Idle — still push frames
             img = get_image(env)
             push_frame(img)
-            obs, _, _, _ = env.step(DUMMY)
+            env.step(np.array(DUMMY))
             time.sleep(0.1)
 
 
