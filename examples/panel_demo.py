@@ -171,9 +171,19 @@ def main():
             if len(action_queue) > 0 and len(obs_queue) >= args.window:
                 act = action_queue.popleft()
                 act[..., -1] *= -1.0
-                obs, _, _, _ = env.step(act.tolist())
+                try:
+                    obs, _, done, _ = env.step(act.tolist())
+                except ValueError:
+                    env.reset()
+                    obs, _, done, _ = env.step(act.tolist())
+                if done:
+                    env.reset()
             else:
-                obs, _, _, _ = env.step(np.array(DUMMY))
+                try:
+                    obs, _, _, _ = env.step(np.array(DUMMY))
+                except ValueError:
+                    env.reset()
+                    obs, _, _, _ = env.step(np.array(DUMMY))
 
             img = get_image(env, obs)
             wrist_img = obs["robot0_eye_in_hand_image"][::-1, ::-1]
