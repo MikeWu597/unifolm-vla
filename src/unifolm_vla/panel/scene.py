@@ -16,10 +16,13 @@ def create_scene(render_resolution: int = 512) -> tuple:
     Returns (env, task_description) tuple.
     task_description is a placeholder — actual instruction comes from the browser.
     """
+    from robosuite.controllers import load_part_controller_config
+    ctrl = load_part_controller_config(default_controller="OSC_POSE")
+
     config = {
-        "env_name": "Lift",  # simple single-arm task domain
+        "env_name": "Lift",
         "robots": "Panda",
-        "controller_configs": "default",
+        "controller_configs": ctrl,
         "has_renderer": False,
         "has_offscreen_renderer": True,
         "render_camera": "agentview",
