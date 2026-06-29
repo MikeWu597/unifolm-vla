@@ -211,6 +211,7 @@ def main():
                 for o in obs_queue:
                     images.extend([o[k] for k in o.keys() if "wrist" in k])
                 q_in = build_inputs(images, current_instruction, state, model, norm_stats)
+                logger.info(f"VLA executing: {current_instruction[:80]}")
                 raw = model.predict_action(q_in)
                 actions = unnorm_actions(raw["normalized_actions"][0], norm_stats)
                 action_queue.extend(actions)
