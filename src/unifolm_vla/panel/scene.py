@@ -7,7 +7,6 @@ No LIBERO / BDDL dependency — just MuJoCo + robosuite.
 
 import numpy as np
 import robosuite as suite
-from robosuite.controllers import load_controller_config
 
 
 def create_scene(render_resolution: int = 512) -> tuple:
@@ -17,12 +16,10 @@ def create_scene(render_resolution: int = 512) -> tuple:
     Returns (env, task_description) tuple.
     task_description is a placeholder — actual instruction comes from the browser.
     """
-    controller_config = load_controller_config(default_controller="OSC_POSE")
-
     config = {
         "env_name": "Lift",  # simple single-arm task domain
         "robots": "Panda",
-        "controller_configs": controller_config,
+        "controller_configs": "default",
         "has_renderer": False,
         "has_offscreen_renderer": True,
         "render_camera": "agentview",
