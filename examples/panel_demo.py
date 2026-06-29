@@ -151,10 +151,15 @@ def main():
             if cmd == "__STOP__":
                 current_instruction = None
                 action_queue.clear()
+                obs_queue.clear()
                 set_status(running=False, instruction="")
+                continue
+            # Same instruction → skip, don't reset context
+            if cmd == current_instruction:
                 continue
             current_instruction = cmd
             action_queue.clear()
+            obs_queue.clear()
             set_status(running=True, instruction=cmd, step=0, active_since=time.time())
             logger.info(f"New command: {cmd}")
 
