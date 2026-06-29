@@ -75,6 +75,7 @@ body{margin:0;background:#111;color:#eee;font-family:monospace;display:flex;heig
 <input id="instr" placeholder="e.g. pick up the block and place it on the plate" autofocus>
 <button class="btn btn-go" onclick="go()">Execute</button>
 <button class="btn btn-stop" onclick="stop()">Stop</button>
+<button class="btn btn-stop" onclick="reset_()" style="background:#444">Reset Arm</button>
 <div id="info">UnifoLM-VLA-Panel | robosuite tabletop</div>
 </div>
 <script>
@@ -83,6 +84,7 @@ document.getElementById("status").className="status-running";document.getElement
 await fetch("/cmd",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({instruction:t})})}
 async function stop(){await fetch("/cmd",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({instruction:"__STOP__"})});
 document.getElementById("status").className="status-idle";document.getElementById("status").innerText="Idle"}
+async function reset_(){await fetch("/cmd",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({instruction:"__RESET__"})})}
 setInterval(async()=>{try{const r=await fetch("/status");const s=await r.json();
 if(!s.running){document.getElementById("status").className="status-idle";
 document.getElementById("status").innerText="Idle — enter instruction below"}

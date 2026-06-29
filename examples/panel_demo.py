@@ -154,6 +154,13 @@ def main():
                 obs_queue.clear()
                 set_status(running=False, instruction="")
                 continue
+            if cmd == "__RESET__":
+                env.reset()
+                action_queue.clear()
+                obs_queue.clear()
+                set_status(running=False, instruction="")
+                logger.info("Scene reset")
+                continue
             # Same instruction → skip, don't reset context
             if cmd == current_instruction:
                 continue
