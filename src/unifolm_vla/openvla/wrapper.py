@@ -12,7 +12,7 @@ from PIL import Image
 
 
 class OpenVLAWrapper:
-    def __init__(self, model_id: str = "moojink/openvla-7b-oft-finetuned-libero-spatial-object-goal-10"):
+    def __init__(self, model_id: str = "openvla/openvla-7b"):
         from transformers import AutoModelForVision2Seq, AutoProcessor
 
         self.processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
@@ -29,6 +29,6 @@ class OpenVLAWrapper:
         inputs = self.processor(prompt, image).to("cuda", dtype=torch.bfloat16)
         return self.model.predict_action(
             **inputs,
-            unnorm_key="libero_spatial_no_noops",
+            unnorm_key="bridge_orig",
             do_sample=False,
         )
