@@ -222,7 +222,11 @@ def main():
             time.sleep(0.02)
         else:
             # Idle — still push frames with dummy steps
-            obs, _, _, _ = env.step(np.array(DUMMY))
+            try:
+                obs, _, _, _ = env.step(np.array(DUMMY))
+            except ValueError:
+                env.reset()
+                obs, _, _, _ = env.step(np.array(DUMMY))
             img = get_image(env, obs)
             push_frame(img)
             time.sleep(0.1)
