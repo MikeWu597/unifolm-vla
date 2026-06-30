@@ -39,8 +39,11 @@ pip install transformers==4.52.3 accelerate==1.5.2 diffusers==0.35.1 qwen-vl-uti
 pip install tiktoken einops omegaconf pydantic pillow "numpy<2" tyro scipy matplotlib
 pip install huggingface_hub fastapi uvicorn
 
-# 5. Simulation (robosuite + mujoco, no LIBERO needed)
+# 5. Simulation (LIBERO)
+git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git /root/autodl-tmp/LIBERO
 pip install mujoco==3.3.5 robosuite==1.4.1 robosuite_models
+pip install bddl easydict cloudpickle gym "imageio[ffmpeg]" imageio-ffmpeg
+pip install -e /root/autodl-tmp/LIBERO
 
 # 6. Register package
 pip install -e . --no-deps
@@ -53,6 +56,7 @@ python download_weights.py --output-dir ./models --use-mirror
 
 # 9. Run
 unset OMP_NUM_THREADS
+export PYTHONPATH=/root/autodl-tmp/LIBERO:$PYTHONPATH
 export MUJOCO_GL=egl
 python examples/panel_demo.py \
     --ckpt ./models/UnifoLM-VLA-LIBERO/checkpoints/pytorch_model.pt \

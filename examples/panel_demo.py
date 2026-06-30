@@ -198,7 +198,8 @@ def main():
                     obs, _, _, _ = env.step(np.array(DUMMY))
 
             img = get_image(env)
-            wrist_img = obs.get("robot0_eye_in_hand_image", img) if isinstance(obs, dict) else img
+            obs_full = env._get_observations()
+            wrist_img = obs_full.get("robot0_eye_in_hand_image", img)
             if isinstance(wrist_img, np.ndarray):
                 wrist_img = wrist_img[::-1, ::-1]
             state = get_state(env)

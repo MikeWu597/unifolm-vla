@@ -1,52 +1,42 @@
 """
-Random tabletop scene with Panda arm — no BDDL, no LIBERO tasks.
+LIBERO tabletop scene — randomly selects from libero_spatial tasks.
 
-Uses robosuite 1.4.1 + mujoco 3.3.5 directly.
-Randomly places 2-5 objects (blocks, balls, cylinders) on a table.
+The VLA was trained on LIBERO spatial tasks — it CAN follow instructions
+in these scenes. Each reset picks a random BDDL for variety.
 """
 
-import numpy as np
 import random
+import numpy as np
 import math
+import pathlib
 
-import robosuite as suite
-from robosuite.controllers import load_controller_config
-from robosuite.utils.placement_samplers import UniformRandomSampler
+from libero.libero.envs import OffScreenRenderEnv
+from libero.libero import get_libero_path
+
+BDDL_DIR = pathlib.Path(get_libero_path("bddl_files")) / "libero_spatial"
+BDDL_FILES = sorted(BDDL_DIR.glob("*.bddl"))
 
 
-def create_scene(render_resolution: int = 512):
-    """Create a random tabletop scene. Returns robosuite env."""
-    ctrl = load_controller_config(default_controller="OSC_POSE")
-
-    config = {
-        "env_name": "Lift",
-        "robots": "Panda",
-        "controller_configs": ctrl,
-        "has_renderer": False,
-        "has_offscreen_renderer": True,
-        "render_camera": "agentview",
-        "camera_heights": render_resolution,
-        "camera_widths": render_resolution,
-        "use_object_obs": False,
-        "use_camera_obs": True,
-        "control_freq": 20,
-        "horizon": 100000,
-        "reward_shaping": False,
-        "ignore_done": True,
-    }
-
-    env = suite.make(**config)
+def create_scene(render_resolution: int = 512, bddl_file=None):
+    """Create a LIBERO scene. Random spatial BDDL if none specified."""
+    if bddl_file is None:
+        bddl_file = str(random.choice(BDDL_FILES))
+    env = OffScreenRenderEnv(
+        bddl_file_name=bddl_file,
+        camera_heights=render_resolution,
+        camera_widths=render_resolution,
+    )
+    env.seed(random.randint(0, 10000))
     env.reset()
     return env
 
 
 def get_image(env) -> np.ndarray:
-    """RGB from agentview camera, rotated 180°."""
-    return env.sim.render(camera_name="agentview", width=512, height=512)[::-1, ::-1]
+    obs = env._get_observations()
+    return obs["agentview_image"][::-1, ::-1]
 
 
 def get_state(env) -> np.ndarray:
-    """7D state: eef pos(3) + quat→axisangle(3) + gripper(1)."""
     obs = env._get_observations()
     pos = obs["robot0_eef_pos"]
     quat = obs["robot0_eef_quat"]
