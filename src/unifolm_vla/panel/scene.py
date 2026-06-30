@@ -31,13 +31,11 @@ def create_scene(render_resolution: int = 512, bddl_file=None):
     return env
 
 
-def get_image(env) -> np.ndarray:
-    obs = env._get_observations()
+def get_image(env, obs) -> np.ndarray:
     return obs["agentview_image"][::-1, ::-1]
 
 
-def get_state(env) -> np.ndarray:
-    obs = env._get_observations()
+def get_state(env, obs) -> np.ndarray:
     pos = obs["robot0_eef_pos"]
     quat = obs["robot0_eef_quat"]
     q = np.array(quat)

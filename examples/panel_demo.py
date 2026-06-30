@@ -197,12 +197,11 @@ def main():
                     env.reset()
                     obs, _, _, _ = env.step(np.array(DUMMY))
 
-            img = get_image(env)
-            obs_full = env._get_observations()
-            wrist_img = obs_full.get("robot0_eye_in_hand_image", img)
+            img = get_image(env, obs)
+            wrist_img = obs.get("robot0_eye_in_hand_image", img)
             if isinstance(wrist_img, np.ndarray):
                 wrist_img = wrist_img[::-1, ::-1]
-            state = get_state(env)
+            state = get_state(env, obs)
             push_frame(img)
 
             obs_queue.append({"full_image": img, "wrist_image": wrist_img, "state": state})
@@ -223,8 +222,8 @@ def main():
             time.sleep(0.02)
         else:
             # Idle — still push frames with dummy steps
-            env.step(np.array(DUMMY))
-            img = get_image(env)
+            obs, _, _, _ = env.step(np.array(DUMMY))
+            img = get_image(env, obs)
             push_frame(img)
             time.sleep(0.1)
 
